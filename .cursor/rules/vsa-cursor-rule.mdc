@@ -14,7 +14,7 @@ alwaysApply: true
 - OS: Ubuntu 22.04 LTS/24.04 LTS.
 - Container runtime: **Docker + Docker Compose v2**.
 - Reverse proxy: **NGINX** (containerized) fronting all services via per-site upstreams, HTTP on `:4480`, HTTPS on `:4443` if a shared ingress is needed; otherwise standard `80/443` when VPS owns the public IP directly.
-- TLS: Prefer **wildcard certificates** already owned by FlowBiz. Fallback to Let's Encrypt (HTTP-01 or DNS-01).
+- TLS: Managed by **Certbot (Let's Encrypt)** with automated issuance/renewal (DNS-01 or HTTP-01). Existing wildcard certs may be imported if needed, but prefer Certbot automation.
 - Networking: Dedicated user-defined bridge networks per stack + one **shared external network** `flowbiz_ext` for reverse proxy.
 - Data paths: `/srv/<tenant>/<app>/{data,env,compose,logs}` with root-owned dirs and app-specific user if needed.
 - Git model: **Monorepo** with `apps/`, `stacks/`, `packages/`, `infra/`, `docs/`.
@@ -80,13 +80,14 @@ alwaysApply: true
 - Each site gets a **vhost** file in `nginx/conf.d/` named `<domain>.conf`.
 - Enforce `HSTS`, `X-Frame-Options DENY`, `X-Content-Type-Options nosniff`, `Referrer-Policy same-origin`.
 - Force HTTPS redirect. HTTP used only for ACME challenges if LE is used.
-- Wildcard certs mounted read-only at `/etc/nginx/certs/`.
+- Certbot-managed certs mounted read-only at `/etc/letsencrypt`. Legacy wildcard certs can be mounted at `/etc/nginx/certs/`.
 
 ### vhost snippet (template)
 ```
 server {
   listen 80;
   server_name {{DOMAIN}};
+  location /.well-known/acme-challenge/ { root /var/www/certbot; }
   return 301 https://$host$request_uri;
 }
 
@@ -94,8 +95,12 @@ server {
   listen 443 ssl http2;
   server_name {{DOMAIN}};
 
-  ssl_certificate     /etc/nginx/certs/{{CERT_NAME}}.crt;
-  ssl_certificate_key /etc/nginx/certs/{{CERT_NAME}}.key;
+  # Prefer Certbot-managed LE certs
+  ssl_certificate     /etc/letsencrypt/live/{{DOMAIN}}/fullchain.pem;
+  ssl_certificate_key /etc/letsencrypt/live/{{DOMAIN}}/privkey.pem;
+  # Or use legacy mounted wildcard certs
+  # ssl_certificate     /etc/nginx/certs/{{CERT_NAME}}.crt;
+  # ssl_certificate_key /etc/nginx/certs/{{CERT_NAME}}.key;
 
   include /etc/nginx/snippets/security_headers.conf;
 
@@ -110,6 +115,16 @@ server {
   }
 }
 ```
+
+## 4a) Certbot Certificate Management
+- Component: `certbot` (containerized), attached to `flowbiz_ext` and sharing volumes with the reverse proxy.
+- Challenges: **HTTP-01** via NGINX webroot by default; **DNS-01** for wildcard/subdomain certs where required.
+- Volumes (persistent on host):
+  - `/srv/flowbiz/reverse-proxy/letsencrypt:/etc/letsencrypt`
+  - `/srv/flowbiz/reverse-proxy/certbot-www:/var/www/certbot`
+- NGINX must expose `/.well-known/acme-challenge/` to `/var/www/certbot` as shown in the vhost template.
+- Renewal: run `certbot renew --quiet --deploy-hook "nginx -s reload"` via cron/container.
+- Example issuance (HTTP-01): `certbot certonly --webroot -w /var/www/certbot -d example.com -d www.example.com --email ops@flowbiz.ai --agree-tos --no-eff-email`.
 
 ## 5) Compose Conventions
 - **Naming:** `project_name` = `<tenant>-<app>` (e.g., `flowbiz-n8n`, `clientx-website`).
@@ -191,7 +206,7 @@ release:
 ### Dify stack
 - `api`, `web`, `worker`, `sandbox` + Postgres + Redis + optional vector DB (Qdrant/Weaviate).
 - NGINX routes `/`→web, `/v1/`→api; ensure `CORS` and `X-Accel-Buffering off` for streams.
-- Provide `.env.example` tailored to single-VPS deployment (no Certbot, reuse wildcard certs).
+- Provide `.env.example` tailored to single-VPS deployment; use Certbot-managed Let's Encrypt certificates.
 
 ### Customer website
 - `web` (Next.js or NGINX static) + optional `api` + DB. Default to **Postgres**.
@@ -299,7 +314,7 @@ cd stacks/clientx-website && make logs
 - OS: Ubuntu 22.04 LTS/24.04 LTS.
 - Container runtime: **Docker + Docker Compose v2**.
 - Reverse proxy: **NGINX** (containerized) fronting all services via per-site upstreams, HTTP on `:4480`, HTTPS on `:4443` if a shared ingress is needed; otherwise standard `80/443` when VPS owns the public IP directly.
-- TLS: Prefer **wildcard certificates** already owned by FlowBiz. Fallback to Let's Encrypt (HTTP-01 or DNS-01).
+- TLS: Managed by **Certbot (Let's Encrypt)** with automated issuance/renewal (DNS-01 or HTTP-01). Existing wildcard certs may be imported if needed, but prefer Certbot automation.
 - Networking: Dedicated user-defined bridge networks per stack + one **shared external network** `flowbiz_ext` for reverse proxy.
 - Data paths: `/srv/<tenant>/<app>/{data,env,compose,logs}` with root-owned dirs and app-specific user if needed.
 - Git model: **Monorepo** with `apps/`, `stacks/`, `packages/`, `infra/`, `docs/`.
@@ -365,13 +380,14 @@ cd stacks/clientx-website && make logs
 - Each site gets a **vhost** file in `nginx/conf.d/` named `<domain>.conf`.
 - Enforce `HSTS`, `X-Frame-Options DENY`, `X-Content-Type-Options nosniff`, `Referrer-Policy same-origin`.
 - Force HTTPS redirect. HTTP used only for ACME challenges if LE is used.
-- Wildcard certs mounted read-only at `/etc/nginx/certs/`.
+- Certbot-managed certs mounted read-only at `/etc/letsencrypt`. Legacy wildcard certs can be mounted at `/etc/nginx/certs/`.
 
 ### vhost snippet (template)
 ```
 server {
   listen 80;
   server_name {{DOMAIN}};
+  location /.well-known/acme-challenge/ { root /var/www/certbot; }
   return 301 https://$host$request_uri;
 }
 
@@ -379,8 +395,12 @@ server {
   listen 443 ssl http2;
   server_name {{DOMAIN}};
 
-  ssl_certificate     /etc/nginx/certs/{{CERT_NAME}}.crt;
-  ssl_certificate_key /etc/nginx/certs/{{CERT_NAME}}.key;
+  # Prefer Certbot-managed LE certs
+  ssl_certificate     /etc/letsencrypt/live/{{DOMAIN}}/fullchain.pem;
+  ssl_certificate_key /etc/letsencrypt/live/{{DOMAIN}}/privkey.pem;
+  # Or use legacy mounted wildcard certs
+  # ssl_certificate     /etc/nginx/certs/{{CERT_NAME}}.crt;
+  # ssl_certificate_key /etc/nginx/certs/{{CERT_NAME}}.key;
 
   include /etc/nginx/snippets/security_headers.conf;
 
@@ -395,6 +415,16 @@ server {
   }
 }
 ```
+
+## 4a) Certbot Certificate Management
+- Component: `certbot` (containerized), attached to `flowbiz_ext` and sharing volumes with the reverse proxy.
+- Challenges: **HTTP-01** via NGINX webroot by default; **DNS-01** for wildcard/subdomain certs where required.
+- Volumes (persistent on host):
+  - `/srv/flowbiz/reverse-proxy/letsencrypt:/etc/letsencrypt`
+  - `/srv/flowbiz/reverse-proxy/certbot-www:/var/www/certbot`
+- NGINX must expose `/.well-known/acme-challenge/` to `/var/www/certbot` as shown in the vhost template.
+- Renewal: run `certbot renew --quiet --deploy-hook "nginx -s reload"` via cron/container.
+- Example issuance (HTTP-01): `certbot certonly --webroot -w /var/www/certbot -d example.com -d www.example.com --email ops@flowbiz.ai --agree-tos --no-eff-email`.
 
 ## 5) Compose Conventions
 - **Naming:** `project_name` = `<tenant>-<app>` (e.g., `flowbiz-n8n`, `clientx-website`).
@@ -476,7 +506,7 @@ release:
 ### Dify stack
 - `api`, `web`, `worker`, `sandbox` + Postgres + Redis + optional vector DB (Qdrant/Weaviate).
 - NGINX routes `/`→web, `/v1/`→api; ensure `CORS` and `X-Accel-Buffering off` for streams.
-- Provide `.env.example` tailored to single-VPS deployment (no Certbot, reuse wildcard certs).
+- Provide `.env.example` tailored to single-VPS deployment; use Certbot-managed Let's Encrypt certificates.
 
 ### Customer website
 - `web` (Next.js or NGINX static) + optional `api` + DB. Default to **Postgres**.
