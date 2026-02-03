@@ -97,6 +97,32 @@ cd apps/vps-admin-cli && uv run ruff check . # Lint Python
 3. Add healthchecks, restart policies, networks (flowbiz_ext + local)
 4. Provision with `vsa site provision`
 
+## Implementation Status (as of 2026-02-03)
+
+All 7 phases of the VSA modernization plan are **implemented and committed** to `master`.
+
+### What's done
+- Shared library (`packages/python/vsa-common/`) with Pydantic models
+- Full CLI (`apps/vps-admin-cli/`) — all commands, services, Jinja2 templates, 30 passing tests
+- Dashboard API (`apps/vps-admin-api/`) — FastAPI, SQLAlchemy async, 7 routers, Alembic, Dockerfile
+- Dashboard UI (`apps/vps-admin-ui/`) — Next.js 14, 6 pages, React Query, Dockerfile
+- Observability updates — Loki retention, Promtail audit pipeline, rate limiting
+- Multi-VPS agent — systemd units, agent commands
+- 4 ADRs, updated runbooks, CI workflow (local only)
+
+### Pending
+- **CI workflow** not pushed (PAT needs `workflow` scope) — file at `.github/workflows/ci.yml`
+- **Dashboard stack** not deployed yet — compose ready at `stacks/dashboard/`
+- **CLI not installed on VPS** — run `cd apps/vps-admin-cli && uv tool install .`
+- **Frontend deps** — run `cd apps/vps-admin-ui && pnpm install`
+- **`uv` required** — install via `curl -LsSf https://astral.sh/uv/install.sh | sh`
+
+### Running tests
+```bash
+cd apps/vps-admin-cli && uv run pytest -q   # 30 tests
+cd apps/vps-admin-cli && uv run ruff check . # lint
+```
+
 ## Quality Gates
 - Missing `.env.example` → block
 - No healthcheck → block

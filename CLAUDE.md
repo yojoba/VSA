@@ -153,6 +153,32 @@ After any significant change (new stacks, architectural shifts, new tooling, cha
 
 This ensures all AI assistants stay aligned with the current state of the project.
 
+## Implementation Status
+
+All 7 phases of the VSA modernization plan have been implemented and committed.
+
+### Completed
+- **Phase 1 — Foundation:** Shared library (`packages/python/vsa-common/`), CLI skeleton, Jinja2 vhost renderer, bcrypt htpasswd service, 30 unit tests
+- **Phase 2 — CLI Core:** All command modules (site, cert, auth, stack, vhost, bootstrap, agent) with audit logging
+- **Phase 3 — Observability:** Loki 90-day retention, Promtail audit scrape pipeline, NGINX rate limiting zones
+- **Phase 4 — Dashboard Backend:** FastAPI + SQLAlchemy async + PostgreSQL, 7 API routers, Alembic migrations, Docker SDK integration, multi-stage Dockerfile
+- **Phase 5 — Dashboard Frontend:** Next.js 14 + Tailwind + React Query, 6 pages (overview, containers, domains, certs, audit, VPS), sidebar nav, status badges
+- **Phase 6 — Multi-VPS Agent:** systemd service + timer units, agent register/start/status commands
+- **Phase 7 — Cleanup:** Deprecated one-off scripts, updated Makefile to delegate to CLI, 4 ADRs, updated runbooks, consolidated root README
+
+### Pending / Known Issues
+- **GitHub Actions CI** (`.github/workflows/ci.yml`) — file exists locally but was removed from git because the GitHub PAT lacks the `workflow` scope. To re-add: update PAT with `workflow` scope, then `git add .github/workflows/ci.yml && git commit -m "ci: add GitHub Actions pipeline" && git push`
+- **Dashboard not yet deployed** — `stacks/dashboard/` compose stack is ready but not yet running on VPS-01. Needs: create `/srv/flowbiz/dashboard/env/.env` from `.env.example`, `docker compose up -d --build`, `vsa site provision --domain dashboard.flowbiz.ai --container dashboard-ui --port 3000`
+- **CLI not yet installed on VPS** — needs `cd apps/vps-admin-cli && uv tool install .` on the target VPS
+- **Frontend dependencies not installed** — needs `cd apps/vps-admin-ui && pnpm install` before build
+- **No `.env` files committed** — by design; `.env.example` files provide templates
+- **`portfolio-api-commands.md`** — untracked personal notes file in repo root, not committed
+
+### Test Status
+- 30 CLI unit tests passing: `cd apps/vps-admin-cli && uv run pytest -q`
+- Tests cover: Pydantic models, VsaConfig, bcrypt htpasswd, Jinja2 vhost rendering, audit logging (JSONL + SQLite)
+- `uv` must be on PATH: installed at `~/.local/bin/uv` via `curl -LsSf https://astral.sh/uv/install.sh | sh`
+
 ## Quality Gates
 
 Do not merge if:
