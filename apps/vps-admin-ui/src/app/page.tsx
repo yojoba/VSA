@@ -32,7 +32,9 @@ export default function OverviewPage() {
   const certs = useQuery({ queryKey: ["certs"], queryFn: api.getCerts });
   const vpsNodes = useQuery({ queryKey: ["vps"], queryFn: api.getVpsNodes });
 
-  const runningCount = containers.data?.filter((c) => c.status === "running").length ?? 0;
+  const runningCount = containers.isError
+    ? "err"
+    : containers.data?.filter((c) => c.status === "running").length ?? "...";
 
   return (
     <div>
@@ -40,9 +42,9 @@ export default function OverviewPage() {
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
         <StatCard title="Running Containers" value={runningCount} icon={Box} />
-        <StatCard title="Domains" value={domains.data?.length ?? "..."} icon={Globe} />
-        <StatCard title="Certificates" value={certs.data?.length ?? "..."} icon={ShieldCheck} />
-        <StatCard title="VPS Nodes" value={vpsNodes.data?.length ?? "..."} icon={Server} />
+        <StatCard title="Domains" value={domains.isError ? "err" : domains.data?.length ?? "..."} icon={Globe} />
+        <StatCard title="Certificates" value={certs.isError ? "err" : certs.data?.length ?? "..."} icon={ShieldCheck} />
+        <StatCard title="VPS Nodes" value={vpsNodes.isError ? "err" : vpsNodes.data?.length ?? "..."} icon={Server} />
       </div>
 
       <h2 className="text-lg font-semibold text-white mb-4">Stacks</h2>
@@ -61,6 +63,8 @@ export default function OverviewPage() {
           </div>
         ))}
         {stacks.isLoading && <p className="text-zinc-500">Loading stacks...</p>}
+        {stacks.isError && <p className="text-red-400 text-sm">Failed to load stacks.</p>}
+        {stacks.data?.length === 0 && <p className="text-zinc-500">No stacks found.</p>}
       </div>
     </div>
   );

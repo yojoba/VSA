@@ -5,7 +5,7 @@ import { api } from "@/lib/api";
 import { StatusBadge } from "@/components/status-badge";
 
 export default function VpsPage() {
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError } = useQuery({
     queryKey: ["vps"],
     queryFn: api.getVpsNodes,
   });
@@ -41,6 +41,7 @@ export default function VpsPage() {
           </tbody>
         </table>
         {isLoading && <p className="text-zinc-500 p-4">Loading...</p>}
+        {isError && <p className="text-red-400 p-4">Failed to load VPS nodes.</p>}
         {data?.length === 0 && (
           <p className="text-zinc-500 p-4">
             No VPS nodes registered. Use <code className="text-zinc-300">vsa agent register</code> to add nodes.

@@ -16,12 +16,13 @@ export default function AuditPage() {
   params.set("page", String(page));
   params.set("per_page", "50");
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError } = useQuery({
     queryKey: ["audit-logs", actor, action, page],
     queryFn: () => api.getAuditLogs(params.toString()),
   });
 
-  const exportUrl = `/api/audit-logs/export?format=csv${actor ? `&actor=${actor}` : ""}${action ? `&action=${action}` : ""}`;
+  const apiBase = process.env.NEXT_PUBLIC_API_URL || "/api";
+  const exportUrl = `${apiBase}/audit-logs/export?format=csv${actor ? `&actor=${actor}` : ""}${action ? `&action=${action}` : ""}`;
 
   return (
     <div>
@@ -84,6 +85,8 @@ export default function AuditPage() {
           </tbody>
         </table>
         {isLoading && <p className="text-zinc-500 p-4">Loading...</p>}
+        {isError && <p className="text-red-400 p-4">Failed to load audit logs.</p>}
+        {data && data.items.length === 0 && <p className="text-zinc-500 p-4">No audit logs found.</p>}
       </div>
 
       {data && data.total > data.per_page && (

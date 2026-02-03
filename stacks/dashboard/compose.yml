@@ -19,9 +19,11 @@ services:
 
   dashboard-api:
     build:
-      context: ../../apps/vps-admin-api
-      dockerfile: Dockerfile
+      context: ../..
+      dockerfile: apps/vps-admin-api/Dockerfile
     restart: unless-stopped
+    group_add:
+      - "${DOCKER_GID:-988}"
     environment:
       VSA_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-vsa}:${POSTGRES_PASSWORD}@dashboard-db:5432/${POSTGRES_DB:-vsa}
       VSA_CORS_ORIGINS: '["https://${DASHBOARD_DOMAIN:-dashboard.flowbiz.ai}"]'
@@ -47,6 +49,8 @@ services:
     build:
       context: ../../apps/vps-admin-ui
       dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: https://${DASHBOARD_DOMAIN:-dashboard.flowbiz.ai}/api
     restart: unless-stopped
     environment:
       NEXT_PUBLIC_API_URL: https://${DASHBOARD_DOMAIN:-dashboard.flowbiz.ai}/api

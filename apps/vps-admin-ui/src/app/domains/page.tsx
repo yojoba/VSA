@@ -5,7 +5,7 @@ import { api } from "@/lib/api";
 import { StatusBadge } from "@/components/status-badge";
 
 export default function DomainsPage() {
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError } = useQuery({
     queryKey: ["domains"],
     queryFn: api.getDomains,
   });
@@ -39,6 +39,7 @@ export default function DomainsPage() {
           </tbody>
         </table>
         {isLoading && <p className="text-zinc-500 p-4">Loading...</p>}
+        {isError && <p className="text-red-400 p-4">Failed to load domains.</p>}
         {data?.length === 0 && <p className="text-zinc-500 p-4">No domains registered yet.</p>}
       </div>
     </div>

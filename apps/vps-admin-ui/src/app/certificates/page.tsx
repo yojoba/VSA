@@ -5,7 +5,7 @@ import { api } from "@/lib/api";
 import { StatusBadge } from "@/components/status-badge";
 
 export default function CertificatesPage() {
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError } = useQuery({
     queryKey: ["certs"],
     queryFn: api.getCerts,
   });
@@ -39,6 +39,7 @@ export default function CertificatesPage() {
           </tbody>
         </table>
         {isLoading && <p className="text-zinc-500 p-4">Loading...</p>}
+        {isError && <p className="text-red-400 p-4">Failed to load certificates.</p>}
         {data?.length === 0 && <p className="text-zinc-500 p-4">No certificates tracked yet.</p>}
       </div>
     </div>
