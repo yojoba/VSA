@@ -99,22 +99,30 @@ cd apps/vps-admin-cli && uv run ruff check . # Lint Python
 
 ## Implementation Status (as of 2026-02-03)
 
-All 7 phases of the VSA modernization plan are **implemented and committed** to `master`.
+All 7 phases of the VSA modernization plan are **implemented, committed, and deployed** on `master`.
 
 ### What's done
 - Shared library (`packages/python/vsa-common/`) with Pydantic models
 - Full CLI (`apps/vps-admin-cli/`) — all commands, services, Jinja2 templates, 30 passing tests
-- Dashboard API (`apps/vps-admin-api/`) — FastAPI, SQLAlchemy async, 7 routers, Alembic, Dockerfile
-- Dashboard UI (`apps/vps-admin-ui/`) — Next.js 14, 6 pages, React Query, Dockerfile
+- Dashboard API (`apps/vps-admin-api/`) — FastAPI, SQLAlchemy async, 7 routers, Alembic migration (5 tables), Dockerfile (repo root build context)
+- Dashboard UI (`apps/vps-admin-ui/`) — Next.js 14, 6 pages, React Query, Dockerfile, pnpm lockfile
 - Observability updates — Loki retention, Promtail audit pipeline, rate limiting
 - Multi-VPS agent — systemd units, agent commands
 - 4 ADRs, updated runbooks, CI workflow (local only)
 
+### Deployed
+- **Dashboard live** at `https://dashboard.flowbiz.ai/` — API + UI + PostgreSQL on VPS-01, TLS (Let's Encrypt), HTTP Basic Auth, NGINX reverse proxy
+- **CLI installed** on VPS-01 at `~/.local/bin/vsa`
+- **Alembic migration** applied — 5 tables (vps_nodes, domains, certificates, audit_logs, container_snapshots)
+
+### Dashboard Docker Build
+- API Dockerfile uses **repo root** as build context to access `packages/python/vsa-common/`
+- Mirrors repo layout at `/workspace/` so `pyproject.toml` relative paths resolve
+- Root `.dockerignore` excludes `.git`, `node_modules`, `stacks/` for small context
+- Runtime uses `PYTHONPATH=/app/src` (uv editable installs reference builder paths)
+
 ### Pending
 - **CI workflow** not pushed (PAT needs `workflow` scope) — file at `.github/workflows/ci.yml`
-- **Dashboard stack** not deployed yet — compose ready at `stacks/dashboard/`
-- **CLI not installed on VPS** — run `cd apps/vps-admin-cli && uv tool install .`
-- **Frontend deps** — run `cd apps/vps-admin-ui && pnpm install`
 - **`uv` required** — install via `curl -LsSf https://astral.sh/uv/install.sh | sh`
 
 ### Running tests

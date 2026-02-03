@@ -138,13 +138,14 @@ make test
 
 ## Deployment
 
+The dashboard is deployed and running at `https://dashboard.flowbiz.ai/` (HTTP Basic Auth).
+
 ```bash
-# Deploy dashboard
+# Dashboard (already deployed on VPS-01)
 cd stacks/dashboard
-cp .env.example /srv/flowbiz/dashboard/env/.env
-# Edit .env with real credentials
-docker compose up -d --build
-vsa site provision --domain dashboard.flowbiz.ai --container dashboard-ui --port 3000
+docker compose up -d --build     # PostgreSQL + API + UI
+# .env is symlinked from /srv/flowbiz/dashboard/env/.env
+# TLS cert via Let's Encrypt, NGINX reverse proxy configured
 
 # Deploy observability
 cd stacks/observability
