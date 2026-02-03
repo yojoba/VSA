@@ -1,0 +1,20 @@
+services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - /srv/${TENANT}/${APP}/data/redis:/data
+    networks:
+      - ${PROJECT_NAME:-stack}-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+networks:
+  ${PROJECT_NAME:-stack}-net: {}
+
+

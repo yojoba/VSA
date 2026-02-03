@@ -1,0 +1,43 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+.env.*
+.env.devenv
+.env.devenv.*
+node_modules/
+dist/
+build/
+coverage/
+*.log
+*.sqlite
+*.db
+.cache/
+.ruff_cache/
+.pytest_cache/
+.next/
+*.local
+.DS_Store
+.idea/
+.vscode/
+.sops.yaml
+*.agekey
+stacks/**/certs/
+stacks/reverse-proxy/letsencrypt/
+stacks/reverse-proxy/certbot-www/
+srv/
+
+# VSA CLI
+apps/vps-admin-cli/.venv/
+apps/vps-admin-api/.venv/
+
+# Dashboard UI
+apps/vps-admin-ui/node_modules/
+apps/vps-admin-ui/.next/
+
+# Audit data (runtime only)
+/var/log/vsa/
+/var/lib/vsa/
+
+

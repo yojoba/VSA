@@ -1,0 +1,42 @@
+server {
+  listen 80;
+  server_name {{ site.domain }}{% if site.include_www %} www.{{ site.domain }}{% endif %};
+  location /.well-known/acme-challenge/ { root /var/www/certbot; }
+  location / { return 301 https://$host$request_uri; }
+}
+
+server {
+  listen 443 ssl;
+  http2 on;
+  server_name {{ site.domain }}{% if site.include_www %} www.{{ site.domain }}{% endif %};
+
+  ssl_certificate     /etc/letsencrypt/live/{{ site.domain }}/fullchain.pem;
+  ssl_certificate_key /etc/letsencrypt/live/{{ site.domain }}/privkey.pem;
+
+  include /etc/nginx/snippets/security_headers.conf;
+
+  {% if site.auth_basic %}
+  # HTTP Basic Auth
+  auth_basic "Restricted Access";
+  auth_basic_user_file /etc/nginx/auth/{{ site.domain }}.htpasswd;
+  {% endif %}
+
+  client_max_body_size {{ site.client_max_body_size }};
+  proxy_read_timeout {{ site.proxy_read_timeout }};
+  proxy_send_timeout {{ site.proxy_send_timeout }};
+
+  resolver 127.0.0.11 ipv6=off;
+  set $upstream {{ site.container }}:{{ site.port }};
+
+  location /healthz { return 200 "ok"; add_header Content-Type text/plain; }
+
+  location / {
+    proxy_pass http://$upstream;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    {% for directive in site.extra_location_directives %}
+    {{ directive }}
+    {% endfor %}
+  }
+}

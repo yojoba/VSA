@@ -1,0 +1,82 @@
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /var/lib/promtail/positions.yml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+    tenant_id: default
+
+scrape_configs:
+  - job_name: system-journal
+    journal:
+      path: /var/log/journal
+      labels:
+        job: systemd-journal
+    relabel_configs:
+      - source_labels: ['__journal__systemd_unit']
+        target_label: systemd_unit
+
+  - job_name: nginx-access
+    static_configs:
+      - targets: [localhost]
+        labels:
+          job: nginx-access
+          __path__: /srv/flowbiz/*/logs/nginx/access*.log
+    pipeline_stages:
+      - regex:
+          expression: '^(?P<remote_addr>\S+) \S+ (?P<remote_user>\S+) \[(?P<time_local>[^\]]+)\] \"(?P<method>\S+) (?P<path>[^\"]*) (?P<protocol>[^\"]+)\" (?P<status>\d{3}) (?P<body_bytes_sent>\d+) \"(?P<referrer>[^\"]*)\" \"(?P<user_agent>[^\"]*)\"(?: (?P<rest>.*))?$'
+      - labels:
+          remote_addr:
+          method:
+          status:
+      - timestamp:
+          source: time_local
+          format: "02/Jan/2006:15:04:05 -0700"
+          location: Europe/Zurich
+
+  - job_name: nginx-error
+    static_configs:
+      - targets: [localhost]
+        labels:
+          job: nginx-error
+          __path__: /srv/flowbiz/*/logs/nginx/error*.log
+
+  - job_name: vsa-audit
+    static_configs:
+      - targets: [localhost]
+        labels:
+          job: vsa-audit
+          __path__: /var/log/vsa/audit.jsonl
+    pipeline_stages:
+      - json:
+          expressions:
+            actor: actor
+            action: action
+            result: result
+            vps_id: vps_id
+            target: target
+      - labels:
+          actor:
+          action:
+          result:
+          vps_id:
+      - timestamp:
+          source: timestamp
+          format: "2006-01-02T15:04:05.000Z"
+
+  - job_name: docker-containers
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+    relabel_configs:
+      - source_labels: ['__meta_docker_container_name']
+        regex: '/(.*)'
+        target_label: container
+      - source_labels: ['__meta_docker_container_label_com_docker_compose_service']
+        target_label: compose_service
+      - source_labels: ['__meta_docker_container_label_com_docker_compose_project']
+        target_label: compose_project
+      - source_labels: ['__meta_docker_container_log_stream']
+        target_label: stream

@@ -1,0 +1,69 @@
+services:
+  dashboard-db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-vsa}
+      POSTGRES_USER: ${POSTGRES_USER:-vsa}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+    volumes:
+      - ${DASHBOARD_DATA_ROOT:-/srv/flowbiz/dashboard/data}/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-vsa}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    networks:
+      - dashboard-net
+
+  dashboard-api:
+    build:
+      context: ../../apps/vps-admin-api
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      VSA_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-vsa}:${POSTGRES_PASSWORD}@dashboard-db:5432/${POSTGRES_DB:-vsa}
+      VSA_CORS_ORIGINS: '["https://${DASHBOARD_DOMAIN:-dashboard.flowbiz.ai}"]'
+      VSA_API_TOKEN: ${VSA_API_TOKEN:-}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /var/log/vsa:/var/log/vsa:ro
+      - /var/lib/vsa:/var/lib/vsa:ro
+    depends_on:
+      dashboard-db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; r=httpx.get('http://localhost:8000/api/health'); r.raise_for_status()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    networks:
+      - dashboard-net
+      - flowbiz_ext
+
+  dashboard-ui:
+    build:
+      context: ../../apps/vps-admin-ui
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      NEXT_PUBLIC_API_URL: https://${DASHBOARD_DOMAIN:-dashboard.flowbiz.ai}/api
+    depends_on:
+      - dashboard-api
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    networks:
+      - dashboard-net
+      - flowbiz_ext
+
+networks:
+  dashboard-net:
+    driver: bridge
+  flowbiz_ext:
+    external: true

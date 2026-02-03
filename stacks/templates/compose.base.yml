@@ -1,0 +1,22 @@
+services:
+  app:
+    image: nginx:1.25-alpine
+    restart: unless-stopped
+    environment:
+      - TZ=Europe/Zurich
+    networks:
+      - ${PROJECT_NAME:-stack}-net
+      - flowbiz_ext
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+networks:
+  flowbiz_ext:
+    external: true
+  ${PROJECT_NAME:-stack}-net: {}
+
+

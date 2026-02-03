@@ -1,0 +1,15 @@
+[Unit]
+Description=VSA Agent — sync containers, certs, and audit logs to dashboard hub
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/vsa agent start
+EnvironmentFile=/etc/vsa/agent.env
+User=root
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

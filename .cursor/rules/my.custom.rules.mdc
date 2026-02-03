@@ -1,0 +1,107 @@
+# FlowBiz / VSA — Custom Cursor Rules
+
+- Default to Python 3.11+ and Node 20+ when creating new code.
+- Keep answers concise by default; expand only when the user asks for more detail.
+- Prefer small, focused code changes and clearly mark which files/sections are affected.
+- Never hard-code secrets or production credentials; always use `.env` with examples only.
+- When adding new features, include at least one simple, offline-capable test.
+- When in doubt about an operation's safety on a live VPS, ask the user before proceeding.
+
+---
+alwaysApply: true
+---
+
+# FlowBiz VPS Admin Suite — Project Rules
+
+## Scope
+- Project: **FlowBiz VPS Admin Suite (VSA)** for multi-tenant hosting on Infomaniak VPS (primary) and Kamatera (legacy).
+- Goals: Fast, secure deployment of **AI apps (Dify, n8n, local LLMs)** and **customer websites** via Docker.
+- Default language: **English**. Timezone: **Europe/Zurich**.
+
+## Architecture
+
+Three main components:
+1. **`vsa` CLI** (`apps/vps-admin-cli/`) — Python Typer CLI replacing all bash scripts
+2. **Dashboard** (`apps/vps-admin-api/` + `apps/vps-admin-ui/` + `stacks/dashboard/`) — FastAPI + Next.js at `dashboard.flowbiz.ai`
+3. **Observability** (`stacks/observability/`) — Grafana, Loki, Promtail, Prometheus with audit log pipeline
+
+### Monorepo Layout
+```
+packages/python/vsa-common/  — Shared Pydantic models (AuditEvent, SiteConfig, VsaConfig)
+apps/
+  vps-admin-cli/             — vsa CLI (Typer + Jinja2 + bcrypt + audit)
+  vps-admin-api/             — Dashboard API (FastAPI + SQLAlchemy + PostgreSQL)
+  vps-admin-ui/              — Dashboard frontend (Next.js 14 + Tailwind)
+stacks/
+  reverse-proxy/             — NGINX 1.25 + Certbot (core infrastructure)
+  dashboard/                 — Dashboard compose stack
+  dify/                      — LLM platform
+  observability/             — Monitoring stack
+infra/
+  scripts/                   — Legacy bash scripts (superseded by CLI)
+  scripts/_deprecated/       — One-off scripts
+  systemd/                   — systemd units for VSA agent
+docs/ADRs/                   — Architecture decision records
+```
+
+### Key Design Decisions
+- **Jinja2 templates** for NGINX vhost generation (not sed)
+- **bcrypt** for htpasswd (not APR1/MD5)
+- **`nginx -t` before reload** (validates before applying)
+- **Structured audit logging** to JSONL + SQLite
+- **Pydantic config** with `VSA_ROOT` env var (no hardcoded paths)
+- **Hub-and-agent** model for multi-VPS management
+
+## Commands
+
+### VSA CLI (primary tool)
+```bash
+vsa site provision --domain X --container Y --port Z
+vsa site provision --domain X --port Z --detect --external-port Z
+vsa site unprovision --domain X
+vsa auth add --domain X --user Y
+vsa auth remove --domain X
+vsa cert renew / status / install-cron
+vsa vhost sync / list / show DOMAIN
+vsa stack new/up/down/logs/ps NAME
+vsa bootstrap
+vsa agent register/start/status
+```
+
+### Development
+```bash
+cd apps/vps-admin-cli && uv run pytest -q    # Run tests
+cd apps/vps-admin-cli && uv run ruff check . # Lint Python
+```
+
+## Conventions
+
+- **Python:** uv, Ruff, pytest, FastAPI, Typer, Pydantic
+- **Node:** pnpm, ESLint, Prettier, Next.js + Tailwind
+- **Docker:** Multi-stage builds, non-root users, HEALTHCHECK required, < 300MB, `restart: unless-stopped`
+- **Git:** Trunk-based, conventional commits, SemVer tags
+- **Networking:** All stacks join `flowbiz_ext` + own internal network
+- **Data paths:** `/srv/<tenant>/<app>/{data,env,logs}`
+- **Audit:** Every CLI operation must use `audit()` context manager
+
+## When Adding CLI Commands
+1. Create module in `apps/vps-admin-cli/src/vsa/commands/`
+2. Register in `cli.py`
+3. Wrap with `audit()` context manager
+4. Add tests in `tests/`
+5. Run `uv run pytest -q`
+
+## When Generating New Stacks
+1. Use `vsa stack new NAME` or create manually
+2. Include compose.yml, .env.example, README.md, Makefile
+3. Add healthchecks, restart policies, networks (flowbiz_ext + local)
+4. Provision with `vsa site provision`
+
+## Quality Gates
+- Missing `.env.example` → block
+- No healthcheck → block
+- No README → block
+- DB ports exposed → block
+- Missing security headers/HSTS → block
+- CLI command missing audit logging → block
+- Tests failing → block

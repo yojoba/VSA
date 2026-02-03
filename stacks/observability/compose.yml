@@ -1,0 +1,109 @@
+version: "3.8"
+
+services:
+  loki:
+    image: grafana/loki:3.0.0
+    restart: unless-stopped
+    command: -config.file=/etc/loki/config/loki-config.yml
+    volumes:
+      - ./loki-config.yml:/etc/loki/config/loki-config.yml:ro
+      - ${OBS_DATA_ROOT:-/srv/flowbiz/observability/data}/loki:/loki
+    ports:
+      - "${LOKI_HTTP_PORT:-3100}:3100"
+    networks:
+      - observability_internal
+
+  grafana:
+    image: grafana/grafana:10.4.0
+    restart: unless-stopped
+    env_file:
+      - ./.env
+    environment:
+      GF_SERVER_DOMAIN: ${GRAFANA_DOMAIN:-grafana.flowbiz.ai}
+      GF_SERVER_ROOT_URL: https://${GRAFANA_DOMAIN:-grafana.flowbiz.ai}
+      GF_SERVER_SERVE_FROM_SUB_PATH: "true"
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-changeme}
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ${OBS_DATA_ROOT:-/srv/flowbiz/observability/data}/grafana:/var/lib/grafana
+      - ${OBS_DATA_ROOT:-/srv/flowbiz/observability/data}/grafana-provisioning:/etc/grafana/provisioning
+    depends_on:
+      - loki
+      - prometheus
+    ports:
+      - "${GRAFANA_HTTP_PORT:-3010}:3000"
+    networks:
+      - observability_internal
+      - flowbiz_ext
+
+  promtail:
+    image: grafana/promtail:3.0.0
+    restart: unless-stopped
+    command: -config.file=/etc/promtail/config/promtail-config.yml
+    volumes:
+      - ./promtail-config.yml:/etc/promtail/config/promtail-config.yml:ro
+      - ${OBS_DATA_ROOT:-/srv/flowbiz/observability/data}/promtail:/var/lib/promtail
+      - /var/log:/var/log:ro
+      - /srv/flowbiz:/srv/flowbiz:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /var/log/vsa:/var/log/vsa:ro
+    networks:
+      - observability_internal
+    depends_on:
+      - loki
+
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --web.external-url=https://${PROMETHEUS_DOMAIN:-prometheus.flowbiz.ai}
+      - --web.route-prefix=/
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ${OBS_DATA_ROOT:-/srv/flowbiz/observability/data}/prometheus:/prometheus
+    ports:
+      - "${PROMETHEUS_HTTP_PORT:-9090}:9090"
+    networks:
+      - observability_internal
+
+  node-exporter:
+    image: prom/node-exporter:v1.8.1
+    restart: unless-stopped
+    command:
+      - --path.rootfs=/host/rootfs
+      - --path.procfs=/host/proc
+      - --path.sysfs=/host/sys
+      - --collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($|/)
+    volumes:
+      - /:/host/rootfs:ro
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+    ports:
+      - "${NODE_EXPORTER_HTTP_PORT:-9100}:9100"
+    networks:
+      - observability_internal
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    restart: unless-stopped
+    privileged: true
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+    ports:
+      - "${CADVISOR_HTTP_PORT:-8080}:8080"
+    networks:
+      - observability_internal
+
+networks:
+  observability_internal:
+    driver: bridge
+  flowbiz_ext:
+    external: true

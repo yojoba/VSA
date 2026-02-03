@@ -1,0 +1,41 @@
+services:
+  nginx:
+    image: nginx:1.25-alpine
+    container_name: reverse-proxy-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    networks:
+      - flowbiz_ext
+    volumes:
+      - /srv/flowbiz/reverse-proxy/nginx/conf.d:/etc/nginx/conf.d:ro
+      - /srv/flowbiz/reverse-proxy/nginx/snippets:/etc/nginx/snippets:ro
+      - /srv/flowbiz/reverse-proxy/nginx/auth:/etc/nginx/auth:ro
+      - /srv/flowbiz/reverse-proxy/letsencrypt:/etc/letsencrypt
+      - /srv/flowbiz/reverse-proxy/certbot-www:/var/www/certbot
+      - /srv/flowbiz/reverse-proxy/logs:/var/log/nginx
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  certbot:
+    image: certbot/certbot:v2.10.0
+    container_name: reverse-proxy-certbot
+    restart: unless-stopped
+    networks:
+      - flowbiz_ext
+    volumes:
+      - /srv/flowbiz/reverse-proxy/letsencrypt:/etc/letsencrypt
+      - /srv/flowbiz/reverse-proxy/certbot-www:/var/www/certbot
+    entrypoint: ["/bin/sh","-c"]
+    command: ["while :; do certbot renew --webroot -w /var/www/certbot --quiet --deploy-hook 'nginx -s reload'; sleep 12h; done"]
+
+networks:
+  flowbiz_ext:
+    external: true
+
+

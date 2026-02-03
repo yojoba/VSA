@@ -1,0 +1,105 @@
+services:
+  web:
+    image: langgenius/dify-web:latest
+    restart: unless-stopped
+    env_file:
+      - /srv/flowbiz/dify/env/.env
+    environment:
+      - TZ=Europe/Zurich
+    depends_on:
+      - api
+    networks:
+      - flowbiz_ext
+      - dify-net
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/ || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  api:
+    image: langgenius/dify-api:latest
+    restart: unless-stopped
+    env_file:
+      - /srv/flowbiz/dify/env/.env
+    environment:
+      - TZ=Europe/Zurich
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - flowbiz_ext
+      - dify-net
+    volumes:
+      - /srv/flowbiz/dify/data:/app/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:5001/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  worker:
+    image: langgenius/dify-worker:latest
+    restart: unless-stopped
+    env_file:
+      - /srv/flowbiz/dify/env/.env
+    environment:
+      - TZ=Europe/Zurich
+    depends_on:
+      - api
+      - redis
+    networks:
+      - dify-net
+
+  sandbox:
+    image: langgenius/dify-sandbox:latest
+    restart: unless-stopped
+    env_file:
+      - /srv/flowbiz/dify/env/.env
+    environment:
+      - TZ=Europe/Zurich
+    networks:
+      - dify-net
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+      - TZ=Europe/Zurich
+    volumes:
+      - /srv/flowbiz/dify/data/postgres:/var/lib/postgresql/data
+    networks:
+      - dify-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - /srv/flowbiz/dify/data/redis:/data
+    networks:
+      - dify-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+networks:
+  flowbiz_ext:
+    external: true
+  dify-net: {}
+
+
