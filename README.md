@@ -41,7 +41,7 @@ Live at `https://dashboard.flowbiz.ai/` (HTTP Basic Auth).
 - **Domains** — provisioned domain list
 - **Certificates** — SSL cert expiry with days remaining and status (live from disk)
 - **Traffic** — per-domain analytics with stats cards, breakdown table, raw logs (live from Loki)
-- **Audit** — infrastructure operation log with pagination
+- **Audit** — infrastructure operation log with pagination (reads from local SQLite + PostgreSQL, merged)
 - **VPS** — node information
 
 ## CLI Commands
@@ -77,6 +77,11 @@ vsa stack up/down/logs/ps NAME
 vsa agent register --hub-url https://dashboard.flowbiz.ai/api --token XXX
 vsa agent start
 vsa agent status
+
+# VPS fleet management
+vsa vps list                                        # List all VPS nodes
+vsa vps add --id vps-02 --hostname X --ip Y         # Pre-register a VPS
+vsa vps remove VPS_ID [-y]                          # Remove VPS + all data
 ```
 
 ## Repository Layout
@@ -84,8 +89,8 @@ vsa agent status
 ```
 packages/python/vsa-common/    Shared Pydantic models and constants
 apps/
-  vps-admin-cli/               vsa CLI (Typer + Jinja2 + bcrypt + audit)
-  vps-admin-api/               Dashboard API (FastAPI + SQLAlchemy + PostgreSQL + Loki)
+  vps-admin-cli/               vsa CLI (Typer + Jinja2 + bcrypt + audit + VPS mgmt)
+  vps-admin-api/               Dashboard API (FastAPI + SQLAlchemy + PostgreSQL + Loki + SQLite)
   vps-admin-ui/                Dashboard UI (Next.js 14 + Tailwind + React Query)
 stacks/
   reverse-proxy/               NGINX 1.25 + Certbot + NGINX Reloader (auto-renewal)
@@ -113,8 +118,9 @@ See [docs/architecture.md](docs/architecture.md) for full architecture documenta
 - **Certificate monitoring** reads Let's Encrypt cert files from disk via the `cryptography` library — always live, never stale
 - **NGINX per-domain JSON logging** enables structured traffic analytics (Promtail extracts domain/method/status labels)
 - **Jinja2 templates** for vhost generation (replaces fragile sed-based substitution)
-- **Dual-write audit logging** to JSONL (Promtail → Loki → Grafana) + SQLite (local queries + dashboard sync)
-- **Hub-and-agent** model for multi-VPS — dashboard on VPS-01, agents sync via systemd timer
+- **Dual-write audit logging** to JSONL (Promtail → Loki → Grafana) + SQLite (local queries + direct dashboard reads on hub)
+- **Hub-and-agent** model for multi-VPS — dashboard on VPS-01, agents sync via systemd timer, full reconciliation (stale entries auto-cleaned)
+- **VPS fleet management** — `vsa vps list/add/remove` for managing multi-VPS nodes from the CLI
 - **Automated cert renewal** — Certbot container renews every 12h, NGINX Reloader sidecar reloads every 6h
 - **Comprehensive unprovision** — 6-step domain cleanup with shared container detection
 - **Reboot resilience** — all containers have `restart: unless-stopped`, Docker daemon enabled on boot

@@ -40,6 +40,11 @@ vsa stack new NAME
 vsa stack up NAME
 vsa bootstrap
 
+# VPS fleet management
+vsa vps list
+vsa vps add --id vps-02 --hostname myserver --ip 1.2.3.4
+vsa vps remove VPS_ID [-y]
+
 # Make targets delegate to CLI
 make provision-container domain=<domain> port=<port> [nowww=true]
 make unprovision-container domain=<domain>
@@ -82,6 +87,7 @@ See `docs/architecture.md` for full architecture documentation with diagrams.
 Key services:
 - **Loki client** (`services/loki.py`) — queries Loki for raw traffic logs and aggregated stats via LogQL metric queries (`count_over_time`, `sum_over_time`, `avg_over_time` with `unwrap`)
 - **Certificate scanner** (`routers/certs.py`) — reads Let's Encrypt cert files from disk via `cryptography` library, returns live expiry dates and status
+- **Audit logs** (`routers/audit_logs.py`) — reads from local SQLite (`/var/lib/vsa/audit.db`, mounted in container) for hub events, merges with PostgreSQL for remote agent events, deduplicates by (timestamp, actor, action, target)
 
 ### Dashboard UI
 
@@ -111,7 +117,7 @@ apps/vps-admin-cli/src/vsa/
 ├── config.py           # VsaConfig singleton (paths from VSA_ROOT env)
 ├── audit.py            # Dual-write JSONL + SQLite audit logger
 ├── errors.py           # Custom exceptions
-├── commands/           # CLI command groups (site, cert, auth, stack, vhost, bootstrap, agent)
+├── commands/           # CLI command groups (site, cert, auth, stack, vhost, vps, bootstrap, agent)
 ├── services/           # Business logic (docker, nginx, certbot, htpasswd, vhost_renderer, network, agent_sync)
 ├── templates/          # Jinja2 NGINX vhost templates
 └── models/             # Re-exported Pydantic models
@@ -174,6 +180,24 @@ VPS-01 hosts the dashboard (hub). Additional VPS nodes run the CLI with `vsa age
 - `vsa agent start` (via systemd timer, every 30s)
 - Sends heartbeats, container snapshots, cert status, traffic stats, and audit events to hub
 
+**VPS fleet management** via `vsa vps`:
+- `vsa vps list` — list all registered VPS nodes (table with ID, hostname, IP, status, last seen)
+- `vsa vps add --id vps-02 --hostname X --ip Y` — pre-register a VPS node in the dashboard
+- `vsa vps remove VPS_ID [-y]` — remove a VPS and all associated data (domains, snapshots, traffic)
+
+**Adding a new VPS to the system:**
+1. On the hub: `vsa vps add --id vps-02 --hostname newserver --ip 1.2.3.4`
+2. On the new VPS: install CLI, then `vsa agent register --hub-url ... --token ...`
+3. On the new VPS: `vsa agent start` (systemd timer takes over, syncs every 30s)
+
+### Agent Sync Reconciliation
+
+Agent sync endpoints perform **full reconciliation**, not append-only:
+- **`domains-sync`** — upserts domains from the payload, then deletes DB entries for that VPS that are no longer in the vhost directory (stale domains removed automatically after unprovision)
+- **`certs-sync`** — same pattern: upserts current certs, deletes stale entries no longer reported
+- **`containers-sync`** — full replacement: deletes all snapshots for the VPS, re-inserts current state
+- **`DELETE /api/agent/vps/{vps_id}`** — removes a VPS node and all associated data (domains, snapshots, traffic stats)
+
 ## Conventions
 
 - **Language defaults:** Python 3.11+, Node 20 LTS
@@ -224,7 +248,7 @@ All 7 phases of the VSA modernization plan have been implemented and committed, 
 
 ### Completed
 - **Phase 1 — Foundation:** Shared library (`packages/python/vsa-common/`), CLI skeleton, Jinja2 vhost renderer, bcrypt htpasswd service, 30 unit tests
-- **Phase 2 — CLI Core:** All command modules (site, cert, auth, stack, vhost, bootstrap, agent) with audit logging
+- **Phase 2 — CLI Core:** All command modules (site, cert, auth, stack, vhost, vps, bootstrap, agent) with audit logging
 - **Phase 3 — Observability:** Loki 90-day retention, Promtail audit scrape pipeline, NGINX rate limiting zones
 - **Phase 4 — Dashboard Backend:** FastAPI + SQLAlchemy async + PostgreSQL, 9 API routers, Alembic migrations (6 tables), Docker SDK integration, multi-stage Dockerfile (repo root build context with `PYTHONPATH`)
 - **Phase 5 — Dashboard Frontend:** Next.js 14 + Tailwind + React Query, 7 pages (overview, containers, domains, certs, audit, traffic, VPS), sidebar nav, status badges, standalone output mode
@@ -235,6 +259,7 @@ All 7 phases of the VSA modernization plan have been implemented and committed, 
 - **Phase 10 — Certificate Auto-Renewal:** Certbot container runs `certbot renew` every 12h, nginx-reloader sidecar reloads NGINX every 6h via Docker socket, replaces broken `deploy-hook` approach
 - **Phase 11 — Comprehensive Unprovision:** `vsa site unprovision` performs 6-step cleanup (vhost, auth, cert, logs, container, nginx reload) with shared container detection and interactive prompts
 - **Phase 12 — Reboot Resilience:** All containers have `restart: unless-stopped`, Docker daemon enabled on boot, verified all 36 containers survive unattended reboot
+- **Phase 13 — Sync Reconciliation & VPS Fleet Management:** Agent sync now performs full reconciliation (stale domains/certs auto-removed after unprovision), audit logs endpoint reads directly from local SQLite (no agent sync dependency for hub events), new `vsa vps` CLI command group (list/add/remove), `DELETE /api/agent/vps/{vps_id}` endpoint
 
 ### Deployed
 - **Dashboard live** at `https://dashboard.flowbiz.ai/` — API + UI + PostgreSQL running on VPS-01, TLS via Let's Encrypt (auto-renew), HTTP Basic Auth (`admin`), NGINX reverse proxy routing `/api/*` to API and `/*` to UI

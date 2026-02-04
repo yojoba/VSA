@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
 
 import typer
 from rich.console import Console
@@ -12,6 +11,17 @@ app = typer.Typer(no_args_is_help=True)
 console = Console()
 
 AGENT_ENV_PATH = Path("/etc/vsa/agent.env")
+
+
+def _load_agent_env() -> dict[str, str]:
+    """Load hub URL and token from agent.env."""
+    if not AGENT_ENV_PATH.exists():
+        return {}
+    env: dict[str, str] = {}
+    for line in AGENT_ENV_PATH.read_text().strip().splitlines():
+        key, _, value = line.partition("=")
+        env[key.strip()] = value.strip()
+    return env
 
 
 @app.command()
@@ -32,14 +42,10 @@ def register(
 @app.command()
 def start() -> None:
     """Run one sync cycle (heartbeat, containers, certs, domains, audit)."""
-    if not AGENT_ENV_PATH.exists():
+    env = _load_agent_env()
+    if not env:
         console.print("[red]Agent not registered. Run 'vsa agent register' first.[/red]")
         raise typer.Exit(1)
-
-    env: dict[str, str] = {}
-    for line in AGENT_ENV_PATH.read_text().strip().splitlines():
-        key, _, value = line.partition("=")
-        env[key.strip()] = value.strip()
 
     hub_url = env.get("VSA_HUB_URL", "")
     token = env.get("VSA_AGENT_TOKEN", "")

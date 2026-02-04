@@ -25,14 +25,14 @@ See `docs/architecture.md` for full architecture documentation with diagrams.
 | Router | Data Source |
 |--------|-------------|
 | `containers` | Docker SDK (live) |
-| `domains` | PostgreSQL |
+| `domains` | PostgreSQL (populated by agent sync with full reconciliation) |
 | `certs` | Disk — reads Let's Encrypt cert files via `cryptography` library |
 | `traffic/stats` | Loki — LogQL metric queries (count_over_time, sum_over_time, avg_over_time) |
 | `traffic/logs` | Loki — raw log entries via query_range |
-| `audit_logs` | PostgreSQL |
+| `audit_logs` | Local SQLite + PostgreSQL (merged, deduplicated) |
 | `stacks` | Docker SDK (live) |
 | `vps` | PostgreSQL |
-| `agent` | Agent sync ingest (POST) |
+| `agent` | Agent sync ingest (POST) + VPS deletion (DELETE) |
 
 ### Dashboard UI — 7 Pages
 
@@ -64,7 +64,8 @@ All stacks join shared `flowbiz_ext` Docker network. Each stack has internal `<n
 - **Git**: Trunk-based, conventional commits (`feat:`, `fix:`, `chore:`, `docs:`), SemVer tags
 - **Indentation**: 2 spaces default, 4 spaces Python, tabs Makefile (see `.editorconfig`)
 - **Audit**: Every infrastructure CLI operation must use `audit()` context manager
-- **API data sources**: Prefer live data (disk, Docker SDK, Loki) over PostgreSQL when possible
+- **API data sources**: Prefer live data (disk, Docker SDK, Loki, local SQLite) over PostgreSQL when possible
+- **Agent sync**: All sync endpoints perform full reconciliation (upsert + delete stale), not append-only
 
 ## Key Commands
 
@@ -87,6 +88,11 @@ vsa cert renew / status / install-cron
 vsa auth add --domain X --user Y
 vsa vhost sync
 vsa agent start
+
+# VPS fleet management
+vsa vps list
+vsa vps add --id vps-02 --hostname myserver --ip 1.2.3.4
+vsa vps remove VPS_ID [-y]
 ```
 
 ## Certificate Auto-Renewal

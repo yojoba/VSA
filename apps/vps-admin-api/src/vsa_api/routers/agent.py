@@ -145,12 +145,18 @@ async def agent_certs_sync(
     db: AsyncSession = Depends(get_db),
     _: None = Depends(_verify_token),
 ):
-    """Receive certificate status from a remote VPS agent (upsert by domain)."""
+    """Receive certificate status from a remote VPS agent (full reconciliation).
+
+    Upserts certs present in the payload and removes stale entries for this VPS.
+    """
+    synced_domains: set[str] = set()
     count = 0
     for cert_data in payload.certs:
         domain = cert_data.get("domain", "")
         if not domain:
             continue
+
+        synced_domains.add(domain)
 
         result = await db.execute(
             select(Certificate).where(Certificate.domain == domain)
@@ -179,6 +185,15 @@ async def agent_certs_sync(
             db.add(cert)
         count += 1
 
+    # Remove stale certs: entries for domains no longer reported by this agent
+    stale = await db.execute(
+        select(Certificate).where(
+            Certificate.domain.notin_(synced_domains) if synced_domains else True,
+        )
+    )
+    for orphan in stale.scalars().all():
+        await db.delete(orphan)
+
     await db.commit()
     return {"synced": count}
 
@@ -189,12 +204,19 @@ async def agent_domains_sync(
     db: AsyncSession = Depends(get_db),
     _: None = Depends(_verify_token),
 ):
-    """Receive domain list from a remote VPS agent (upsert by domain)."""
+    """Receive domain list from a remote VPS agent (full reconciliation).
+
+    Upserts domains present in the payload and removes any domains for this
+    VPS that are no longer reported (i.e. their vhost was deleted).
+    """
+    synced_domains: set[str] = set()
     count = 0
     for d in payload.domains:
         domain_name = d.get("domain", "")
         if not domain_name:
             continue
+
+        synced_domains.add(domain_name)
 
         result = await db.execute(
             select(Domain).where(Domain.domain == domain_name)
@@ -217,8 +239,44 @@ async def agent_domains_sync(
             db.add(existing)
         count += 1
 
+    # Remove stale domains: entries for this VPS that are no longer in vhost files
+    stale = await db.execute(
+        select(Domain).where(
+            Domain.vps_id == payload.vps_id,
+            Domain.domain.notin_(synced_domains) if synced_domains else True,
+        )
+    )
+    for orphan in stale.scalars().all():
+        await db.delete(orphan)
+
     await db.commit()
     return {"synced": count}
+
+
+@router.delete("/agent/vps/{vps_id}")
+async def remove_vps(
+    vps_id: str,
+    db: AsyncSession = Depends(get_db),
+    _: None = Depends(_verify_token),
+):
+    """Remove a VPS node and all its associated data (domains, certs, snapshots)."""
+    # Delete associated data
+    await db.execute(delete(Domain).where(Domain.vps_id == vps_id))
+    await db.execute(
+        delete(ContainerSnapshot).where(ContainerSnapshot.vps_id == vps_id)
+    )
+    await db.execute(delete(TrafficStat).where(TrafficStat.vps_id == vps_id))
+
+    # Delete the node itself
+    result = await db.execute(
+        delete(VpsNode).where(VpsNode.vps_id == vps_id)
+    )
+    await db.commit()
+
+    if result.rowcount == 0:  # type: ignore[attr-defined]
+        raise HTTPException(status_code=404, detail=f"VPS '{vps_id}' not found")
+
+    return {"status": "ok", "vps_id": vps_id}
 
 
 @router.post("/agent/traffic-sync")

@@ -39,6 +39,7 @@ vsa/
 │   ├── auth.py         # HTTP Basic Auth (bcrypt)
 │   ├── stack.py        # Docker Compose stack lifecycle
 │   ├── vhost.py        # NGINX vhost synchronization
+│   ├── vps.py          # VPS fleet management (list/add/remove)
 │   ├── bootstrap.py    # Initial VPS setup
 │   └── agent.py        # Multi-VPS agent (register/start/status)
 ├── services/
@@ -68,10 +69,11 @@ FastAPI async backend providing REST endpoints for the management dashboard.
 | `certs` | `GET /api/certs` | Disk (Let's Encrypt cert files) |
 | `traffic` | `GET /api/traffic/stats` | Loki (LogQL metric queries) |
 | `traffic` | `GET /api/traffic/logs` | Loki (raw log entries) |
-| `audit_logs` | `GET /api/audit-logs` | PostgreSQL |
+| `audit_logs` | `GET /api/audit-logs` | Local SQLite + PostgreSQL (merged) |
 | `stacks` | `GET /api/stacks` | Docker SDK (live) |
 | `vps` | `GET /api/vps` | PostgreSQL |
 | `agent` | `POST /api/agent/*` | Agent sync (ingest) |
+| `agent` | `DELETE /api/agent/vps/{id}` | Remove VPS and associated data |
 
 **Services:**
 - `loki.py` — Loki client for raw log queries and LogQL metric aggregation
@@ -180,8 +182,19 @@ CLI operation
   │
   ├──▶ /var/log/vsa/audit.jsonl  ──▶  Promtail  ──▶  Loki  ──▶  Grafana
   │
-  └──▶ /var/lib/vsa/audit.db     ──▶  Agent sync  ──▶  Dashboard API  ──▶  Dashboard UI
+  └──▶ /var/lib/vsa/audit.db ──┬──▶  Dashboard API (direct read, hub-local)  ──▶  Dashboard UI
+                               │
+                               └──▶  Agent sync (remote VPS)  ──▶  Dashboard API (PostgreSQL)
 ```
+
+**Hub-local events:** The API container mounts `/var/lib/vsa` (ro) and reads the local SQLite
+audit DB directly — no agent sync dependency for hub events.
+
+**Remote events:** Agent sync on remote VPS nodes sends events to `POST /api/agent/audit-sync`,
+stored in PostgreSQL.
+
+**Merge & dedup:** The `/api/audit-logs` endpoint merges both sources, deduplicates by
+`(timestamp, actor, action, target)`, and returns paginated results sorted newest-first.
 
 ### Multi-VPS Hub-and-Agent
 
@@ -195,11 +208,49 @@ VPS-01 (Hub)                              VPS-02..N (Agents)
 │     domains         │   traffic-sync    │ Collects:           │
 │     traffic-sync    │   audit-events    │   container state   │
 │     audit-events    │                   │   cert status       │
-│                     │                   │   traffic stats     │
-│ PostgreSQL          │                   │   audit events      │
+│   DELETE /agent/    │                   │   traffic stats     │
+│     vps/{id}        │                   │   audit events      │
+│                     │                   │                     │
+│ PostgreSQL          │                   │                     │
 │   (stores all data) │                   │                     │
 └─────────────────────┘                   └─────────────────────┘
 ```
+
+#### VPS Fleet Management
+
+```bash
+vsa vps list                                    # List all VPS nodes (table)
+vsa vps add --id vps-02 --hostname X --ip Y     # Pre-register a VPS
+vsa vps remove vps-02 [-y]                      # Remove VPS + all data
+```
+
+**Adding a new VPS:**
+1. On hub: `vsa vps add --id vps-02 --hostname newserver --ip 1.2.3.4`
+2. On new VPS: `vsa agent register --hub-url https://dashboard.flowbiz.ai/api --token <token>`
+3. On new VPS: `vsa agent start` (systemd timer syncs every 30s)
+
+#### Agent Sync Reconciliation
+
+Sync endpoints perform **full reconciliation** — not append-only:
+
+```
+Agent payload (current state from vhost files)
+  │
+  ▼
+API endpoint (domains-sync / certs-sync)
+  │
+  ├─ UPSERT: domains present in payload → insert or update in DB
+  │
+  └─ DELETE: domains in DB for this VPS that are NOT in payload → removed
+     (handles cleanup after `vsa site unprovision`)
+```
+
+| Endpoint | Strategy | Stale Entry Handling |
+|----------|----------|---------------------|
+| `domains-sync` | Upsert + delete stale by `vps_id` | Domains removed after unprovision |
+| `certs-sync` | Upsert + delete stale | Certs removed after cert deletion |
+| `containers-sync` | Full replacement (delete all + re-insert) | Always fresh |
+| `DELETE /agent/vps/{id}` | Cascade delete | Removes VPS + domains + snapshots + traffic |
 
 ## Networking
 

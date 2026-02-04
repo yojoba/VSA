@@ -64,6 +64,7 @@ vsa auth remove --domain X
 vsa cert renew / status / install-cron
 vsa vhost sync / list / show DOMAIN
 vsa stack new/up/down/logs/ps NAME
+vsa vps list / add --id X --hostname Y --ip Z / remove VPS_ID
 vsa bootstrap
 vsa agent register/start/status
 ```
@@ -97,17 +98,20 @@ cd apps/vps-admin-cli && uv run ruff check . # Lint Python
 3. Add healthchecks, restart policies, networks (flowbiz_ext + local)
 4. Provision with `vsa site provision`
 
-## Implementation Status (as of 2026-02-03)
+## Implementation Status (as of 2026-02-04)
 
-All 7 phases of the VSA modernization plan are **implemented, committed, and deployed** on `master`.
+All phases of the VSA modernization plan are **implemented, committed, and deployed** on `master`.
 
 ### What's done
 - Shared library (`packages/python/vsa-common/`) with Pydantic models
-- Full CLI (`apps/vps-admin-cli/`) — all commands, services, Jinja2 templates, 30 passing tests
-- Dashboard API (`apps/vps-admin-api/`) — FastAPI, SQLAlchemy async, 7 routers, Alembic migration (5 tables), Dockerfile (repo root build context)
-- Dashboard UI (`apps/vps-admin-ui/`) — Next.js 14, 6 pages, React Query, Dockerfile, pnpm lockfile
+- Full CLI (`apps/vps-admin-cli/`) — all commands (site, cert, auth, stack, vhost, vps, bootstrap, agent), services, Jinja2 templates, 30 passing tests
+- Dashboard API (`apps/vps-admin-api/`) — FastAPI, SQLAlchemy async, 9 routers, Alembic migration (6 tables), Dockerfile (repo root build context)
+- Dashboard UI (`apps/vps-admin-ui/`) — Next.js 14, 7 pages, React Query, Dockerfile, pnpm lockfile
 - Observability updates — Loki retention, Promtail audit pipeline, rate limiting
-- Multi-VPS agent — systemd units, agent commands
+- Multi-VPS agent — systemd units, agent commands, full reconciliation sync
+- VPS fleet management — `vsa vps list/add/remove` CLI commands
+- Audit logs — direct local SQLite reads on hub (no agent sync dependency)
+- Agent sync reconciliation — stale domains/certs auto-cleaned after unprovision
 - 4 ADRs, updated runbooks, CI workflow (local only)
 
 ### Deployed
