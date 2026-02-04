@@ -33,6 +33,7 @@ services:
       - /var/log/vsa:/var/log/vsa:ro
       - /var/lib/vsa:/var/lib/vsa:ro
       - /srv/flowbiz/reverse-proxy/letsencrypt:/etc/letsencrypt:ro
+      - /srv/flowbiz/reverse-proxy/nginx/conf.d:/etc/nginx/conf.d:ro
     depends_on:
       dashboard-db:
         condition: service_healthy

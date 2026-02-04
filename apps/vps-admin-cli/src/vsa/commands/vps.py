@@ -2,29 +2,41 @@
 
 from __future__ import annotations
 
+import os
+
 import httpx
 import typer
 from rich.console import Console
 from rich.table import Table
 
 from vsa.audit import audit
-from vsa.commands.agent import AGENT_ENV_PATH, _load_agent_env
+from vsa.commands.agent import _load_agent_env
 
 app = typer.Typer(no_args_is_help=True)
 console = Console()
 
 
 def _hub_client() -> tuple[str, dict[str, str]]:
-    """Return (hub_url, headers) or exit if agent is not registered."""
-    env = _load_agent_env()
-    if not env:
-        console.print("[red]Agent not registered. Run 'vsa agent register' first.[/red]")
-        raise typer.Exit(1)
+    """Return (hub_url, headers).
 
-    hub_url = env.get("VSA_HUB_URL", "")
-    token = env.get("VSA_AGENT_TOKEN", "")
+    Resolution order:
+    1. Environment variables VSA_HUB_URL / VSA_API_TOKEN
+    2. Agent registration file (/etc/vsa/agent.env)
+    """
+    hub_url = os.environ.get("VSA_HUB_URL", "")
+    token = os.environ.get("VSA_API_TOKEN", "")
+
     if not hub_url or not token:
-        console.print("[red]Missing VSA_HUB_URL or VSA_AGENT_TOKEN in agent.env[/red]")
+        env = _load_agent_env()
+        hub_url = hub_url or env.get("VSA_HUB_URL", "")
+        token = token or env.get("VSA_AGENT_TOKEN", "")
+
+    if not hub_url or not token:
+        console.print(
+            "[red]No hub connection configured.[/red]\n"
+            "Set VSA_HUB_URL and VSA_API_TOKEN env vars, "
+            "or run 'vsa agent register' first."
+        )
         raise typer.Exit(1)
 
     return hub_url, {"Authorization": f"Bearer {token}"}
@@ -35,7 +47,7 @@ def list_vps() -> None:
     """List all registered VPS nodes."""
     hub_url, headers = _hub_client()
 
-    resp = httpx.get(f"{hub_url}/vps", headers=headers, timeout=30.0)
+    resp = httpx.get(f"{hub_url}/agent/vps", headers=headers, timeout=30.0)
     resp.raise_for_status()
     nodes = resp.json()
 

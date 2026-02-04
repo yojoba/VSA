@@ -253,6 +253,27 @@ async def agent_domains_sync(
     return {"synced": count}
 
 
+@router.get("/agent/vps")
+async def list_vps_nodes(
+    db: AsyncSession = Depends(get_db),
+    _: None = Depends(_verify_token),
+):
+    """List all registered VPS nodes (token-authenticated for CLI use)."""
+    result = await db.execute(select(VpsNode).order_by(VpsNode.vps_id))
+    nodes = result.scalars().all()
+    return [
+        {
+            "id": n.id,
+            "vps_id": n.vps_id,
+            "hostname": n.hostname,
+            "ip_address": n.ip_address,
+            "status": n.status,
+            "last_seen": n.last_seen.isoformat() if n.last_seen else None,
+        }
+        for n in nodes
+    ]
+
+
 @router.delete("/agent/vps/{vps_id}")
 async def remove_vps(
     vps_id: str,

@@ -136,7 +136,7 @@ export default function TrafficPage() {
           >
             <option value="">All domains</option>
             {domains.map((d) => (
-              <option key={d.id} value={d.domain}>
+              <option key={d.domain} value={d.domain}>
                 {d.domain}
               </option>
             ))}
