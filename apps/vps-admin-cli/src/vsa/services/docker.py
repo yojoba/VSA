@@ -68,6 +68,17 @@ def network_connect(network: str, container: str) -> None:
     _run(["docker", "network", "connect", network, container])
 
 
+def network_disconnect(network: str, container: str) -> None:
+    """Disconnect a container from a Docker network (no error if not connected)."""
+    _run(["docker", "network", "disconnect", network, container], check=False)
+
+
+def container_stop_remove(name: str) -> None:
+    """Stop and remove a container."""
+    _run(["docker", "stop", name], check=False)
+    _run(["docker", "rm", name], check=False)
+
+
 def find_container_by_port(external_port: int) -> str:
     """Find a running container publishing the given host port."""
     result = _run(["docker", "ps", "--format", "{{.Names}}\t{{.Ports}}"])

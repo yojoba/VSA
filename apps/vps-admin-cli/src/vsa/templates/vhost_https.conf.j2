@@ -14,6 +14,7 @@ server {
   ssl_certificate_key /etc/letsencrypt/live/{{ site.domain }}/privkey.pem;
 
   include /etc/nginx/snippets/security_headers.conf;
+  access_log /var/log/nginx/domains/{{ site.domain }}.access.json json_detailed;
 
   {% if site.auth_basic %}
   # HTTP Basic Auth

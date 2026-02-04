@@ -1,9 +1,8 @@
-version: "3.8"
-
 services:
   loki:
     image: grafana/loki:3.0.0
     restart: unless-stopped
+    user: "1001"
     command: -config.file=/etc/loki/config/loki-config.yml
     volumes:
       - ./loki-config.yml:/etc/loki/config/loki-config.yml:ro
@@ -12,10 +11,12 @@ services:
       - "${LOKI_HTTP_PORT:-3100}:3100"
     networks:
       - observability_internal
+      - flowbiz_ext
 
   grafana:
     image: grafana/grafana:10.4.0
     restart: unless-stopped
+    user: "1001"
     env_file:
       - ./.env
     environment:
@@ -58,6 +59,7 @@ services:
   prometheus:
     image: prom/prometheus:v2.53.0
     restart: unless-stopped
+    user: "1001"
     command:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.path=/prometheus

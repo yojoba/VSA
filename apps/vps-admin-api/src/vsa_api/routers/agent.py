@@ -7,12 +7,12 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vsa_api.config import settings
 from vsa_api.db.session import get_db
-from vsa_api.db.tables import AuditLog, ContainerSnapshot, VpsNode
+from vsa_api.db.tables import AuditLog, Certificate, ContainerSnapshot, Domain, TrafficStat, VpsNode
 
 router = APIRouter(tags=["agent"])
 
@@ -42,6 +42,16 @@ class ContainerSyncPayload(BaseModel):
 class CertSyncPayload(BaseModel):
     vps_id: str
     certs: list[dict[str, Any]]
+
+
+class DomainSyncPayload(BaseModel):
+    vps_id: str
+    domains: list[dict[str, Any]]
+
+
+class TrafficSyncPayload(BaseModel):
+    vps_id: str
+    stats: list[dict[str, Any]]
 
 
 @router.post("/agent/heartbeat")
@@ -107,7 +117,14 @@ async def agent_containers_sync(
     db: AsyncSession = Depends(get_db),
     _: None = Depends(_verify_token),
 ):
-    """Receive container snapshot from a remote VPS agent."""
+    """Receive container snapshot from a remote VPS agent (full replacement)."""
+    # Delete stale snapshots for this VPS before inserting fresh ones
+    await db.execute(
+        delete(ContainerSnapshot).where(
+            ContainerSnapshot.vps_id == payload.vps_id
+        )
+    )
+
     for c in payload.containers:
         snapshot = ContainerSnapshot(
             vps_id=payload.vps_id,
@@ -128,5 +145,115 @@ async def agent_certs_sync(
     db: AsyncSession = Depends(get_db),
     _: None = Depends(_verify_token),
 ):
-    """Receive certificate status from a remote VPS agent."""
-    return {"synced": len(payload.certs), "status": "accepted"}
+    """Receive certificate status from a remote VPS agent (upsert by domain)."""
+    count = 0
+    for cert_data in payload.certs:
+        domain = cert_data.get("domain", "")
+        if not domain:
+            continue
+
+        result = await db.execute(
+            select(Certificate).where(Certificate.domain == domain)
+        )
+        cert = result.scalar_one_or_none()
+
+        expiry_raw = cert_data.get("expiry")
+        expiry = None
+        if expiry_raw:
+            try:
+                expiry = datetime.fromisoformat(expiry_raw)
+            except (ValueError, TypeError):
+                pass
+
+        if cert:
+            cert.issuer = cert_data.get("issuer", "Let's Encrypt")
+            cert.expiry = expiry
+            cert.status = cert_data.get("status", "valid")
+        else:
+            cert = Certificate(
+                domain=domain,
+                issuer=cert_data.get("issuer", "Let's Encrypt"),
+                expiry=expiry,
+                status=cert_data.get("status", "valid"),
+            )
+            db.add(cert)
+        count += 1
+
+    await db.commit()
+    return {"synced": count}
+
+
+@router.post("/agent/domains-sync")
+async def agent_domains_sync(
+    payload: DomainSyncPayload,
+    db: AsyncSession = Depends(get_db),
+    _: None = Depends(_verify_token),
+):
+    """Receive domain list from a remote VPS agent (upsert by domain)."""
+    count = 0
+    for d in payload.domains:
+        domain_name = d.get("domain", "")
+        if not domain_name:
+            continue
+
+        result = await db.execute(
+            select(Domain).where(Domain.domain == domain_name)
+        )
+        existing = result.scalar_one_or_none()
+
+        if existing:
+            existing.container = d.get("container", existing.container)
+            existing.port = d.get("port", existing.port)
+            existing.vps_id = payload.vps_id
+            existing.status = "active"
+        else:
+            existing = Domain(
+                domain=domain_name,
+                container=d.get("container", ""),
+                port=d.get("port", 3000),
+                vps_id=payload.vps_id,
+                status="active",
+            )
+            db.add(existing)
+        count += 1
+
+    await db.commit()
+    return {"synced": count}
+
+
+@router.post("/agent/traffic-sync")
+async def agent_traffic_sync(
+    payload: TrafficSyncPayload,
+    db: AsyncSession = Depends(get_db),
+    _: None = Depends(_verify_token),
+):
+    """Receive aggregated traffic stats from a remote VPS agent."""
+    count = 0
+    for stat in payload.stats:
+        period_start = stat.get("period_start", "")
+        period_end = stat.get("period_end", "")
+        try:
+            ps = datetime.fromisoformat(period_start) if period_start else datetime.now(timezone.utc)
+            pe = datetime.fromisoformat(period_end) if period_end else datetime.now(timezone.utc)
+        except (ValueError, TypeError):
+            ps = datetime.now(timezone.utc)
+            pe = datetime.now(timezone.utc)
+
+        entry = TrafficStat(
+            domain=stat.get("domain", ""),
+            vps_id=payload.vps_id,
+            period_start=ps,
+            period_end=pe,
+            requests=stat.get("requests", 0),
+            status_2xx=stat.get("status_2xx", 0),
+            status_3xx=stat.get("status_3xx", 0),
+            status_4xx=stat.get("status_4xx", 0),
+            status_5xx=stat.get("status_5xx", 0),
+            bytes_sent=stat.get("bytes_sent", 0),
+            avg_request_time_ms=stat.get("avg_request_time_ms", 0),
+        )
+        db.add(entry)
+        count += 1
+
+    await db.commit()
+    return {"synced": count}

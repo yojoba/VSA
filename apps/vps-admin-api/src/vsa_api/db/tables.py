@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, Integer, String, Text, func
+from sqlalchemy import BigInteger, DateTime, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from vsa_api.db.session import Base
@@ -78,3 +78,24 @@ class ContainerSnapshot(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+
+
+class TrafficStat(Base):
+    __tablename__ = "traffic_stats"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    domain: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    vps_id: Mapped[str] = mapped_column(String(64), nullable=False, default="vps-01")
+    period_start: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, index=True
+    )
+    period_end: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    requests: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    status_2xx: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    status_3xx: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    status_4xx: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    status_5xx: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    bytes_sent: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    avg_request_time_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

@@ -32,7 +32,17 @@ services:
       - /srv/flowbiz/reverse-proxy/letsencrypt:/etc/letsencrypt
       - /srv/flowbiz/reverse-proxy/certbot-www:/var/www/certbot
     entrypoint: ["/bin/sh","-c"]
-    command: ["while :; do certbot renew --webroot -w /var/www/certbot --quiet --deploy-hook 'nginx -s reload'; sleep 12h; done"]
+    command: ["while :; do certbot renew --webroot -w /var/www/certbot --quiet; sleep 12h; done"]
+
+  # Periodically reload NGINX to pick up renewed certificates
+  nginx-reloader:
+    image: docker:27-cli
+    container_name: reverse-proxy-reloader
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    entrypoint: ["/bin/sh","-c"]
+    command: ["while :; do sleep 6h; docker exec reverse-proxy-nginx nginx -s reload 2>/dev/null; done"]
 
 networks:
   flowbiz_ext:

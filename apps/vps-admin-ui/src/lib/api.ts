@@ -33,10 +33,10 @@ export interface Domain {
 }
 
 export interface Certificate {
-  id: number;
   domain: string;
   issuer: string;
   expiry: string | null;
+  days_remaining: number | null;
   status: string;
 }
 
@@ -79,6 +79,35 @@ export interface Stack {
   }[];
 }
 
+export interface TrafficStat {
+  domain: string;
+  requests: number;
+  status_2xx: number;
+  status_3xx: number;
+  status_4xx: number;
+  status_5xx: number;
+  bytes_sent: number;
+  avg_request_time_ms: number;
+  period_start: string | null;
+  period_end: string | null;
+}
+
+export interface TrafficLogEntry {
+  time: string;
+  domain: string;
+  remote_addr: string;
+  method: string;
+  uri: string;
+  status: number;
+  body_bytes_sent: number;
+  request_time: number;
+  upstream_response_time: string;
+  http_user_agent: string;
+  http_referer: string;
+  http_x_forwarded_for: string;
+  server_protocol: string;
+}
+
 export const api = {
   getContainers: () => fetchApi<Container[]>("/containers"),
   getDomains: () => fetchApi<Domain[]>("/domains"),
@@ -87,4 +116,8 @@ export const api = {
     fetchApi<PaginatedAuditLogs>(`/audit-logs${params ? `?${params}` : ""}`),
   getStacks: () => fetchApi<Stack[]>("/stacks"),
   getVpsNodes: () => fetchApi<VpsNode[]>("/vps"),
+  getTrafficStats: (params?: string) =>
+    fetchApi<TrafficStat[]>(`/traffic/stats${params ? `?${params}` : ""}`),
+  getTrafficLogs: (params: string) =>
+    fetchApi<TrafficLogEntry[]>(`/traffic/logs?${params}`),
 };

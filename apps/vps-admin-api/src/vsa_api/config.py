@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     audit_db_path: str = "/var/lib/vsa/audit.db"
     cors_origins: list[str] = ["http://localhost:3000"]
     api_token: str = ""  # Pre-shared token for agent auth
+    loki_url: str = "http://loki:3100"
 
     model_config = {"env_prefix": "VSA_"}
 

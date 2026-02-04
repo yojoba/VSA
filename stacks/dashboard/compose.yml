@@ -32,6 +32,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - /var/log/vsa:/var/log/vsa:ro
       - /var/lib/vsa:/var/lib/vsa:ro
+      - /srv/flowbiz/reverse-proxy/letsencrypt:/etc/letsencrypt:ro
     depends_on:
       dashboard-db:
         condition: service_healthy
@@ -57,7 +58,7 @@ services:
     depends_on:
       - dashboard-api
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:3000"]
+      test: ["CMD", "wget", "-qO-", "http://0.0.0.0:3000"]
       interval: 30s
       timeout: 5s
       retries: 3

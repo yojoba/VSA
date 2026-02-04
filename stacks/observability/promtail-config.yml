@@ -37,6 +37,33 @@ scrape_configs:
           format: "02/Jan/2006:15:04:05 -0700"
           location: Europe/Zurich
 
+  - job_name: nginx-domain-access
+    static_configs:
+      - targets: [localhost]
+        labels:
+          job: nginx-domain-access
+          __path__: /srv/flowbiz/reverse-proxy/logs/domains/*.access.json
+    pipeline_stages:
+      - json:
+          expressions:
+            domain: domain
+            remote_addr: remote_addr
+            method: method
+            uri: uri
+            status: status
+            body_bytes_sent: body_bytes_sent
+            request_time: request_time
+            upstream_response_time: upstream_response_time
+            http_user_agent: http_user_agent
+      - labels:
+          domain:
+          method:
+          status:
+      - timestamp:
+          source: time
+          format: "2006-01-02T15:04:05+07:00"
+          location: Europe/Zurich
+
   - job_name: nginx-error
     static_configs:
       - targets: [localhost]

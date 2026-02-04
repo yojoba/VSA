@@ -7,7 +7,7 @@ Monorepo for managing multi-tenant hosting on Infomaniak VPS (primary) and Kamat
 | Component | Location | Description |
 |-----------|----------|-------------|
 | **`vsa` CLI** | `apps/vps-admin-cli/` | Python Typer CLI for all infrastructure operations |
-| **Dashboard API** | `apps/vps-admin-api/` | FastAPI backend — containers, domains, certs, audit logs |
+| **Dashboard API** | `apps/vps-admin-api/` | FastAPI backend — containers, domains, certs, traffic, audit |
 | **Dashboard UI** | `apps/vps-admin-ui/` | Next.js 14 frontend at `dashboard.flowbiz.ai` |
 | **Shared library** | `packages/python/vsa-common/` | Pydantic models and config shared by CLI and API |
 | **Stacks** | `stacks/` | Docker Compose stacks (reverse-proxy, dashboard, dify, observability) |
@@ -31,13 +31,26 @@ vsa site provision --domain example.com --container web-1 --port 3000
 vsa cert status
 ```
 
+## Dashboard
+
+Live at `https://dashboard.flowbiz.ai/` (HTTP Basic Auth).
+
+**7 pages:**
+- **Overview** — system summary
+- **Containers** — Docker container status (live from Docker SDK)
+- **Domains** — provisioned domain list
+- **Certificates** — SSL cert expiry with days remaining and status (live from disk)
+- **Traffic** — per-domain analytics with stats cards, breakdown table, raw logs (live from Loki)
+- **Audit** — infrastructure operation log with pagination
+- **VPS** — node information
+
 ## CLI Commands
 
 ```bash
 # Site management
 vsa site provision --domain X --container Y --port Z
 vsa site provision --domain X --port Z --detect --external-port Z
-vsa site unprovision --domain X
+vsa site unprovision --domain X [--keep-container] [--keep-cert] [-y]
 vsa site list
 
 # SSL certificates
@@ -72,25 +85,39 @@ vsa agent status
 packages/python/vsa-common/    Shared Pydantic models and constants
 apps/
   vps-admin-cli/               vsa CLI (Typer + Jinja2 + bcrypt + audit)
-  vps-admin-api/               Dashboard API (FastAPI + SQLAlchemy + PostgreSQL)
+  vps-admin-api/               Dashboard API (FastAPI + SQLAlchemy + PostgreSQL + Loki)
   vps-admin-ui/                Dashboard UI (Next.js 14 + Tailwind + React Query)
 stacks/
-  reverse-proxy/               NGINX 1.25 + Certbot (14 live vhosts)
+  reverse-proxy/               NGINX 1.25 + Certbot + NGINX Reloader (auto-renewal)
   dashboard/                   Dashboard stack (API + UI + PostgreSQL)
   dify/                        Dify LLM platform
-  observability/               Grafana, Loki, Promtail, Prometheus, cAdvisor
+  observability/               Grafana 10.4, Loki 3.0, Promtail, Prometheus 2.53, cAdvisor
   llm-gateway/                 LLM backend routing (placeholder)
   templates/                   Reusable compose snippets
 infra/
   scripts/                     Legacy bash scripts (superseded by CLI)
-  scripts/_deprecated/         One-off migration scripts
   systemd/                     systemd units for VSA agent
 docs/
+  architecture.md              Full architecture documentation
   ADRs/                        Architecture decision records
   runbooks/                    Operational runbooks
 ```
 
 ## Architecture
+
+See [docs/architecture.md](docs/architecture.md) for full architecture documentation with data flow diagrams.
+
+### Key Design Decisions
+
+- **Traffic analytics** query Loki directly via LogQL metric queries — no dependency on PostgreSQL for traffic data
+- **Certificate monitoring** reads Let's Encrypt cert files from disk via the `cryptography` library — always live, never stale
+- **NGINX per-domain JSON logging** enables structured traffic analytics (Promtail extracts domain/method/status labels)
+- **Jinja2 templates** for vhost generation (replaces fragile sed-based substitution)
+- **Dual-write audit logging** to JSONL (Promtail → Loki → Grafana) + SQLite (local queries + dashboard sync)
+- **Hub-and-agent** model for multi-VPS — dashboard on VPS-01, agents sync via systemd timer
+- **Automated cert renewal** — Certbot container renews every 12h, NGINX Reloader sidecar reloads every 6h
+- **Comprehensive unprovision** — 6-step domain cleanup with shared container detection
+- **Reboot resilience** — all containers have `restart: unless-stopped`, Docker daemon enabled on boot
 
 ### Networking
 
@@ -105,27 +132,13 @@ All stacks join the shared `flowbiz_ext` Docker network for reverse proxy access
   logs/      Application logs
 ```
 
-### NGINX Vhost Generation
-
-The CLI uses **Jinja2 templates** to generate NGINX configs (replacing fragile sed-based substitution). Every vhost includes security headers (HSTS, X-Frame-Options DENY, CSP) and rate limiting.
-
-### Audit Logging
-
-Every CLI operation writes to:
-- `/var/log/vsa/audit.jsonl` — scraped by Promtail into Loki for Grafana
-- `/var/lib/vsa/audit.db` — SQLite for local queries and dashboard sync
-
-### Multi-VPS (Hub-and-Agent)
-
-VPS-01 hosts the dashboard (hub). Additional VPS nodes run `vsa agent` via systemd timer, syncing heartbeats, container state, cert status, and audit events.
-
 ## Development
 
 ```bash
 # Install CLI dependencies
 cd apps/vps-admin-cli && uv sync
 
-# Run tests (30 unit tests)
+# Run tests (30+ unit tests)
 uv run pytest -q
 
 # Lint
@@ -138,34 +151,39 @@ make test
 
 ## Deployment
 
-The dashboard is deployed and running at `https://dashboard.flowbiz.ai/` (HTTP Basic Auth).
-
 ```bash
 # Dashboard (already deployed on VPS-01)
 cd stacks/dashboard
 docker compose up -d --build     # PostgreSQL + API + UI
-# .env is symlinked from /srv/flowbiz/dashboard/env/.env
-# TLS cert via Let's Encrypt, NGINX reverse proxy configured
+
+# API-only rebuild (faster)
+docker compose up -d --build dashboard-api
+
+# UI-only rebuild
+docker compose up -d --build dashboard-ui
 
 # Deploy observability
 cd stacks/observability
 docker compose up -d
 
-# Install cert monitoring cron
+# Install cert monitoring cron (optional, certbot container handles renewal)
 vsa cert install-cron
 ```
+
+> **Note:** Certificate renewal is automatic — the certbot container checks every 12h and the NGINX reloader picks up renewed certs every 6h. The cron job is an optional extra safety net with logging.
 
 ## Conventions
 
 - **Python**: 3.11+, uv, Ruff, pytest, Pydantic
 - **Node**: 20 LTS, pnpm, ESLint, Prettier, Next.js + Tailwind
-- **Docker**: Multi-stage builds, non-root users, HEALTHCHECK required, < 300MB
+- **Docker**: Multi-stage builds, non-root users, HEALTHCHECK required, < 300MB, `restart: unless-stopped` on all containers
 - **Git**: Conventional commits, trunk-based, SemVer tags
 - **Every CLI command**: Must use `audit()` context manager
 - **Every stack**: Must have compose.yml, .env.example, README.md, healthchecks
 
 ## Documentation
 
+- [Architecture](docs/architecture.md)
 - [ADR-001: CLI Replaces Bash Scripts](docs/ADRs/001-cli-replaces-bash-scripts.md)
 - [ADR-002: Jinja2 Vhost Templates](docs/ADRs/002-jinja2-vhost-templates.md)
 - [ADR-003: Dual-Write Audit Logging](docs/ADRs/003-dual-write-audit-logging.md)

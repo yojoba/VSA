@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from logging.config import fileConfig
 
 from alembic import context
@@ -15,6 +16,11 @@ from vsa_api.db import tables  # noqa: F401 — ensure models are imported
 config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
+
+# Allow env var to override alembic.ini URL (needed inside Docker)
+db_url = os.environ.get("VSA_DATABASE_URL")
+if db_url:
+    config.set_main_option("sqlalchemy.url", db_url)
 
 target_metadata = Base.metadata
 

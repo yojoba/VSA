@@ -31,14 +31,27 @@ def register(
 
 @app.command()
 def start() -> None:
-    """Start the agent loop (heartbeat, container sync, cert check, audit sync)."""
+    """Run one sync cycle (heartbeat, containers, certs, domains, audit)."""
     if not AGENT_ENV_PATH.exists():
         console.print("[red]Agent not registered. Run 'vsa agent register' first.[/red]")
         raise typer.Exit(1)
 
-    console.print("[yellow]Agent start is intended to be run via systemd timer.[/yellow]")
-    console.print("Install with: sudo cp infra/systemd/vsa-agent.* /etc/systemd/system/")
-    console.print("             sudo systemctl enable --now vsa-agent.timer")
+    env: dict[str, str] = {}
+    for line in AGENT_ENV_PATH.read_text().strip().splitlines():
+        key, _, value = line.partition("=")
+        env[key.strip()] = value.strip()
+
+    hub_url = env.get("VSA_HUB_URL", "")
+    token = env.get("VSA_AGENT_TOKEN", "")
+    if not hub_url or not token:
+        console.print("[red]Missing VSA_HUB_URL or VSA_AGENT_TOKEN in agent.env[/red]")
+        raise typer.Exit(1)
+
+    console.print(f"[bold]Syncing with {hub_url} ...[/bold]")
+
+    from vsa.services.agent_sync import run_sync
+
+    run_sync(hub_url, token)
 
 
 @app.command()

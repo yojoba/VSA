@@ -35,6 +35,21 @@ def issue_cert(
         raise CertbotError(f"Certbot failed for {domain}:\n{result.stderr}")
 
 
+def delete_cert(compose_file: Path, domain: str) -> None:
+    """Delete a Let's Encrypt certificate for a domain."""
+    result = docker._run(
+        [
+            "docker", "compose", "-f", str(compose_file),
+            "run", "--rm", "--entrypoint", "certbot", "certbot",
+            "delete", "--cert-name", domain, "--non-interactive",
+        ],
+        check=False,
+    )
+    if result.returncode != 0:
+        # Not fatal — cert may not exist
+        pass
+
+
 def renew(compose_file: Path) -> str:
     """Run certbot renew for all certificates."""
     result = docker._run(

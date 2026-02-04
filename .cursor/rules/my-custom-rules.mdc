@@ -1,0 +1,158 @@
+---
+description: FlowBiz VSA project rules and conventions
+globs:
+alwaysApply: true
+---
+
+# FlowBiz VPS Admin Suite (VSA)
+
+Monorepo for managing multi-tenant hosting on Infomaniak VPS. Orchestrates Docker Compose stacks for AI apps (Dify, n8n, local LLMs) and customer websites behind NGINX reverse proxy with Let's Encrypt SSL automation.
+
+## Components
+
+1. **`vsa` CLI** (`apps/vps-admin-cli/`) — Python/Typer CLI for all infrastructure operations
+2. **Dashboard API** (`apps/vps-admin-api/`) — FastAPI + SQLAlchemy async + PostgreSQL + Loki
+3. **Dashboard UI** (`apps/vps-admin-ui/`) — Next.js 14 + Tailwind + React Query
+4. **Shared library** (`packages/python/vsa-common/`) — Pydantic models and constants
+5. **Stacks** (`stacks/`) — Docker Compose stacks (reverse-proxy, dashboard, observability, dify)
+
+## Architecture
+
+See `docs/architecture.md` for full architecture documentation with diagrams.
+
+### Dashboard API — 9 Routers
+
+| Router | Data Source |
+|--------|-------------|
+| `containers` | Docker SDK (live) |
+| `domains` | PostgreSQL |
+| `certs` | Disk — reads Let's Encrypt cert files via `cryptography` library |
+| `traffic/stats` | Loki — LogQL metric queries (count_over_time, sum_over_time, avg_over_time) |
+| `traffic/logs` | Loki — raw log entries via query_range |
+| `audit_logs` | PostgreSQL |
+| `stacks` | Docker SDK (live) |
+| `vps` | PostgreSQL |
+| `agent` | Agent sync ingest (POST) |
+
+### Dashboard UI — 7 Pages
+
+Overview (`/`), Containers, Domains, Certificates, Traffic, Audit, VPS
+
+### Traffic Analytics Pipeline
+
+```
+NGINX (json_detailed per-domain logs)
+  → Promtail (nginx-domain-access job, extracts domain/method/status labels)
+    → Loki (stores with labels)
+      → Dashboard API (LogQL metric queries)
+        → Dashboard UI (stats cards, per-domain table, raw logs)
+```
+
+### Certificate Monitoring
+
+`/api/certs` reads `/etc/letsencrypt/live/*/fullchain.pem` via `cryptography` library. Returns live expiry, days remaining, status (valid/warning/critical/expired).
+
+### Networking
+
+All stacks join shared `flowbiz_ext` Docker network. Each stack has internal `<name>-net`. No DB ports exposed publicly.
+
+## Conventions
+
+- **Python**: 3.11+, `uv` (preferred), Ruff lint/format, pytest, FastAPI + Uvicorn, Typer, Pydantic
+- **Node**: 20 LTS, pnpm, ESLint, Prettier, Next.js 14 + Tailwind
+- **Docker**: Multi-stage builds, non-root users, slim bases, HEALTHCHECK required, <300MB, `restart: unless-stopped` on **every** container (reboot-safe)
+- **Git**: Trunk-based, conventional commits (`feat:`, `fix:`, `chore:`, `docs:`), SemVer tags
+- **Indentation**: 2 spaces default, 4 spaces Python, tabs Makefile (see `.editorconfig`)
+- **Audit**: Every infrastructure CLI operation must use `audit()` context manager
+- **API data sources**: Prefer live data (disk, Docker SDK, Loki) over PostgreSQL when possible
+
+## Key Commands
+
+```bash
+# Stack lifecycle
+make up / down / logs / ps
+
+# Tests
+cd apps/vps-admin-cli && uv run pytest -q
+
+# Rebuild dashboard
+cd stacks/dashboard && docker compose up -d --build dashboard-api
+cd stacks/dashboard && docker compose up -d --build dashboard-ui
+
+# VSA CLI
+vsa site provision --domain X --container Y --port Z
+vsa site unprovision --domain X [--keep-container] [--keep-cert] [-y]
+vsa site list
+vsa cert renew / status / install-cron
+vsa auth add --domain X --user Y
+vsa vhost sync
+vsa agent start
+```
+
+## Certificate Auto-Renewal
+
+Three services in `stacks/reverse-proxy/compose.yml`:
+- **`reverse-proxy-certbot`** — `certbot renew` every 12h (auto-renews certs within 30d of expiry)
+- **`reverse-proxy-reloader`** — `docker exec nginx -s reload` every 6h (picks up renewed certs)
+- Renewal configs: `/srv/flowbiz/reverse-proxy/letsencrypt/renewal/<domain>.conf`
+
+## Site Unprovision
+
+`vsa site unprovision --domain X` performs 6-step cleanup:
+1. Remove vhost config (repo + mount)
+2. Remove auth/htpasswd files
+3. Delete Let's Encrypt cert
+4. Remove per-domain access logs
+5. Stop/remove container (with shared container detection)
+6. Reload NGINX
+
+Shared container detection scans all vhosts to find domains sharing the same upstream container before deletion.
+
+## When Adding CLI Commands
+
+1. Create module in `apps/vps-admin-cli/src/vsa/commands/`
+2. Register in `cli.py` via `app.add_typer()` or `app.command()`
+3. Wrap with `audit()` context manager
+4. Add tests in `apps/vps-admin-cli/tests/`
+
+## When Adding API Endpoints
+
+1. Create/extend router in `apps/vps-admin-api/src/vsa_api/routers/`
+2. Register in `main.py` via `app.include_router(router, prefix="/api")`
+3. For live data, prefer disk/Loki over PostgreSQL
+4. Add TypeScript types in `apps/vps-admin-ui/src/lib/api.ts`
+5. Rebuild: `cd stacks/dashboard && docker compose up -d --build dashboard-api`
+
+## When Adding Stacks
+
+1. Create `stacks/<name>/compose.yml`, `.env.example`, `README.md`
+2. Include healthchecks, restart policies, volumes
+3. Networks: join `flowbiz_ext` + create local `<name>-net`
+4. Provision: `vsa site provision --domain X --container Y --port Z`
+
+## Data Path Convention
+
+```
+/srv/<tenant>/<app>/
+├── data/    # App data, DB volumes
+├── env/     # .env files (chmod 640, never committed)
+├── logs/    # Application logs
+└── compose/ # Optional compose overrides
+```
+
+## Quality Gates
+
+- `.env.example` required (placeholder-only values)
+- HEALTHCHECK in Dockerfile/compose
+- README for every stack
+- No DB ports exposed to internet
+- NGINX vhosts must include security headers/HSTS
+- CLI commands must use audit logging
+- Tests must pass: `cd apps/vps-admin-cli && uv run pytest -q`
+
+## Keeping Rules in Sync
+
+After significant changes, update all three:
+- `CLAUDE.md` — Claude Code
+- `.cursor/rules/my-custom-rules.mdc` — Cursor IDE (this file)
+- `docs/architecture.md` — human reference
