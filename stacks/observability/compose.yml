@@ -2,11 +2,10 @@ services:
   loki:
     image: grafana/loki:3.0.0
     restart: unless-stopped
-    user: "1001"
     command: -config.file=/etc/loki/config/loki-config.yml
     volumes:
       - ./loki-config.yml:/etc/loki/config/loki-config.yml:ro
-      - ${OBS_DATA_ROOT:-/srv/flowbiz/observability/data}/loki:/loki
+      - loki-data:/loki
     ports:
       - "${LOKI_HTTP_PORT:-3100}:3100"
     networks:
@@ -16,7 +15,6 @@ services:
   grafana:
     image: grafana/grafana:10.4.0
     restart: unless-stopped
-    user: "1001"
     env_file:
       - ./.env
     environment:
@@ -28,7 +26,7 @@ services:
       GF_AUTH_ANONYMOUS_ENABLED: "false"
       GF_USERS_ALLOW_SIGN_UP: "false"
     volumes:
-      - ${OBS_DATA_ROOT:-/srv/flowbiz/observability/data}/grafana:/var/lib/grafana
+      - grafana-data:/var/lib/grafana
       - ${OBS_DATA_ROOT:-/srv/flowbiz/observability/data}/grafana-provisioning:/etc/grafana/provisioning
     depends_on:
       - loki
@@ -45,7 +43,7 @@ services:
     command: -config.file=/etc/promtail/config/promtail-config.yml
     volumes:
       - ./promtail-config.yml:/etc/promtail/config/promtail-config.yml:ro
-      - ${OBS_DATA_ROOT:-/srv/flowbiz/observability/data}/promtail:/var/lib/promtail
+      - promtail-data:/var/lib/promtail
       - /var/log:/var/log:ro
       - /srv/flowbiz:/srv/flowbiz:ro
       - /var/lib/docker/containers:/var/lib/docker/containers:ro
@@ -59,15 +57,16 @@ services:
   prometheus:
     image: prom/prometheus:v2.53.0
     restart: unless-stopped
-    user: "1001"
     command:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=15d
+      - --storage.tsdb.retention.size=1GB
       - --web.external-url=https://${PROMETHEUS_DOMAIN:-prometheus.flowbiz.ai}
       - --web.route-prefix=/
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - ${OBS_DATA_ROOT:-/srv/flowbiz/observability/data}/prometheus:/prometheus
+      - prometheus-data:/prometheus
     ports:
       - "${PROMETHEUS_HTTP_PORT:-9090}:9090"
     networks:
@@ -103,6 +102,16 @@ services:
       - "${CADVISOR_HTTP_PORT:-8080}:8080"
     networks:
       - observability_internal
+
+volumes:
+  prometheus-data:
+    name: obs-prometheus-data
+  loki-data:
+    name: obs-loki-data
+  grafana-data:
+    name: obs-grafana-data
+  promtail-data:
+    name: obs-promtail-data
 
 networks:
   observability_internal:

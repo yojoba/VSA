@@ -19,7 +19,7 @@ common:
 
 limits_config:
   allow_structured_metadata: false
-  retention_period: 90d  # ISO 27001 compliance — 90-day log retention
+  retention_period: 30d
 
 compactor:
   working_directory: /loki/compactor
