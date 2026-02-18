@@ -84,6 +84,12 @@ cd stacks/dashboard && docker compose up -d --build dashboard-ui
 vsa site provision --domain X --container Y --port Z
 vsa site unprovision --domain X [--keep-container] [--keep-cert] [-y]
 vsa site list
+
+# Multipoint provisioning (multiple backends on one domain)
+vsa site provision --domain promoflash.flowbiz.ai \
+  --route /=promoflash-frontend:80 \
+  --route /api/=promoflash-pocketbase:8090 \
+  --route /_/=promoflash-pocketbase:8090
 vsa cert renew / status / install-cron
 vsa auth add --domain X --user Y
 vsa vhost sync
@@ -136,6 +142,14 @@ Shared container detection scans all vhosts to find domains sharing the same ups
 3. Networks: join `flowbiz_ext` + create local `<name>-net`
 4. Provision: `vsa site provision --domain X --container Y --port Z`
 
+## Storage Strategy
+
+**Two-disk layout:**
+- **Root `/`** — OS, configs, bind-mounted config files (vhosts, certs, `.env` files)
+- **`/var/lib/docker` (`/dev/sdb`)** — Docker named volumes (observability data, app data)
+
+Observability data uses Docker named volumes: `obs-prometheus-data` (15d/1GB cap), `obs-loki-data` (30d retention), `obs-grafana-data`, `obs-promtail-data`. Reverse-proxy configs, certs, and logs remain as bind mounts on root.
+
 ## Data Path Convention
 
 ```
@@ -161,4 +175,18 @@ Shared container detection scans all vhosts to find domains sharing the same ups
 After significant changes, update all three:
 - `CLAUDE.md` — Claude Code
 - `.cursor/rules/my-custom-rules.mdc` — Cursor IDE (this file)
-- `docs/architecture.md` — human reference
+
+## Multipoint Provisioning
+
+Use `--route` (repeatable) to route different URL paths to different containers:
+
+```bash
+vsa site provision --domain promoflash.flowbiz.ai \
+  --route /=promoflash-frontend:80 \
+  --route /api/=promoflash-pocketbase:8090 \
+  --route /_/=promoflash-pocketbase:8090
+```
+
+Result: `/` → frontend, `/api/*` → PocketBase API, `/_/*` → PocketBase admin UI
+- `docs/architecture.md` — high-level architecture (human reference)
+- `docs/low-level-design.md` — storage, retention, networking internals

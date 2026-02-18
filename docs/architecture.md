@@ -117,7 +117,7 @@ Pydantic models and constants shared between CLI and API:
 |-------|----------|---------|
 | `reverse-proxy` | NGINX 1.25, Certbot, NGINX Reloader | TLS termination, routing, per-domain JSON logging, auto-renewal |
 | `dashboard` | PostgreSQL 16, FastAPI, Next.js | Management dashboard |
-| `observability` | Grafana 10.4, Loki 3.0, Promtail 3.0, Prometheus 2.53, Node Exporter, cAdvisor | Monitoring and log aggregation |
+| `observability` | Grafana 10.4, Loki 3.0, Promtail 3.0, Prometheus 2.53, Node Exporter, cAdvisor | Monitoring and log aggregation (named volumes on dedicated disk) |
 | `dify` | Dify platform | AI/LLM workbench |
 | `llm-gateway` | (placeholder) | LLM backend routing |
 
@@ -275,7 +275,28 @@ API endpoint (domains-sync / certs-sync)
 - **`<stack>-net`** — internal bridge per stack for inter-service communication
 - **No database ports exposed publicly**
 
-## Data Path Convention
+## Storage Architecture
+
+### Two-Disk Layout
+
+```
+/dev/sda (root /)                          /dev/sdb (/var/lib/docker)
+├── /srv/flowbiz/                          ├── /var/lib/docker/volumes/
+│   ├── reverse-proxy/                     │   ├── obs-prometheus-data/   (15d / 1GB cap)
+│   │   ├── nginx/conf.d/   (vhosts)      │   ├── obs-loki-data/         (30d retention)
+│   │   ├── letsencrypt/    (TLS certs)    │   ├── obs-grafana-data/
+│   │   ├── logs/           (access logs)  │   └── obs-promtail-data/
+│   │   └── auth/           (htpasswd)     │
+│   ├── dashboard/data/     (PostgreSQL)   ├── /var/lib/docker/overlay2/  (container layers)
+│   └── observability/data/                └── /var/lib/docker/containers/ (container logs)
+│       └── grafana-provisioning/ (config)
+├── /var/log/vsa/            (audit JSONL)
+└── /var/lib/vsa/            (audit SQLite)
+```
+
+**Design principle:** Heavy, growing data (metrics, logs, container images) lives on the dedicated Docker disk (`/dev/sdb`, 246G). Configuration, certificates, and small state files stay on root.
+
+### Data Path Convention
 
 ```
 /srv/<tenant>/<app>/
@@ -295,7 +316,27 @@ Example: `/srv/flowbiz/reverse-proxy/letsencrypt/` stores all TLS certificates.
 - Log format config: `stacks/reverse-proxy/nginx/snippets/log_format_json.conf` (included via `00-log-format.conf`)
 - TLS: Let's Encrypt via HTTP-01 (webroot), Certbot auto-renew every 12h
 - Provisioning: `vsa site provision` handles full workflow (network attach, HTTP vhost, cert issuance, HTTPS vhost, nginx reload)
+- Multipoint provisioning: `--route` option (repeatable) routes different URL paths to different containers
 - Unprovisioning: `vsa site unprovision` performs 6-step cleanup with shared container detection
+
+### Multipoint Provisioning
+
+Use `--route` (repeatable) to route different URL paths to different containers behind a single domain:
+
+```bash
+# Example: promoflash.flowbiz.ai with frontend + PocketBase backend
+vsa site provision --domain promoflash.flowbiz.ai \
+  --route /=promoflash-frontend:80 \
+  --route /api/=promoflash-pocketbase:8090 \
+  --route /_/=promoflash-pocketbase:8090
+```
+
+Result:
+- `/` → `promoflash-frontend:80` (frontend app)
+- `/api/*` → `promoflash-pocketbase:8090` (PocketBase API)
+- `/_/*` → `promoflash-pocketbase:8090` (PocketBase admin UI)
+
+The CLI generates an NGINX vhost with multiple `location` blocks, each routing to the specified container. All containers are automatically connected to the `flowbiz_ext` network.
 
 ### Certificate Auto-Renewal Architecture
 
@@ -335,6 +376,18 @@ vsa site unprovision --domain example.com
   │    └─ Otherwise → stop, remove, disconnect from network
   └─ [6/6] Reload NGINX
 ```
+
+## Data Retention Policies
+
+| Data | Retention | Enforcement |
+|------|-----------|-------------|
+| Prometheus metrics | 15 days / 1GB max | `--storage.tsdb.retention.time=15d` + `--storage.tsdb.retention.size=1GB` |
+| Loki logs | 30 days | `retention_period: 30d` in loki-config.yml, compactor deletes expired chunks |
+| Audit logs (SQLite) | Indefinite | Local file on root disk |
+| Audit logs (PostgreSQL) | Indefinite | Dashboard database |
+| PostgreSQL (dashboard) | Indefinite | Bind mount on root disk |
+| NGINX access logs | Indefinite (disk-managed) | Bind mount on root disk, per-domain JSON files |
+| Container logs | Docker default (100MB/container) | Managed by Docker daemon |
 
 ## Reboot Resilience
 

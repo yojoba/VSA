@@ -53,6 +53,14 @@ vsa site provision --domain X --port Z --detect --external-port Z
 vsa site unprovision --domain X [--keep-container] [--keep-cert] [-y]
 vsa site list
 
+# Multipoint provisioning (multiple backends on one domain)
+# Routes different URL paths to different containers behind a single domain
+vsa site provision --domain promoflash.flowbiz.ai \
+  --route /=promoflash-frontend:80 \
+  --route /api/=promoflash-pocketbase:8090 \
+  --route /_/=promoflash-pocketbase:8090
+# Result: / → frontend, /api/* → PocketBase API, /_/* → PocketBase admin UI
+
 # SSL certificates
 vsa cert issue --domain X
 vsa cert renew
@@ -129,7 +137,13 @@ See [docs/architecture.md](docs/architecture.md) for full architecture documenta
 
 All stacks join the shared `flowbiz_ext` Docker network for reverse proxy access. Each stack has its own internal network. No database ports are exposed publicly.
 
-### Data Paths
+### Storage
+
+**Two-disk layout:**
+- **Root `/`** — OS, configs, NGINX vhosts/certs/logs, `.env` files
+- **`/var/lib/docker` (dedicated 246G disk)** — Docker named volumes for heavy data
+
+Observability data (Prometheus, Loki, Grafana) uses Docker named volumes to avoid filling the root disk. Prometheus is capped at 15d/1GB, Loki retains 30 days of logs.
 
 ```
 /srv/<tenant>/<app>/
@@ -189,7 +203,8 @@ vsa cert install-cron
 
 ## Documentation
 
-- [Architecture](docs/architecture.md)
+- [Architecture (high-level)](docs/architecture.md)
+- [Low-Level Design](docs/low-level-design.md)
 - [ADR-001: CLI Replaces Bash Scripts](docs/ADRs/001-cli-replaces-bash-scripts.md)
 - [ADR-002: Jinja2 Vhost Templates](docs/ADRs/002-jinja2-vhost-templates.md)
 - [ADR-003: Dual-Write Audit Logging](docs/ADRs/003-dual-write-audit-logging.md)

@@ -30,6 +30,12 @@ vsa site provision --domain X --container Y --port Z
 vsa site provision --domain X --port Z --detect --external-port Z
 vsa site unprovision --domain X [--keep-container] [--keep-cert] [-y]
 vsa site list
+
+# Multipoint provisioning (multiple backends on one domain)
+vsa site provision --domain promoflash.flowbiz.ai \
+  --route /=promoflash-frontend:80 \
+  --route /api/=promoflash-pocketbase:8090 \
+  --route /_/=promoflash-pocketbase:8090
 vsa auth add --domain X --user Y
 vsa auth remove --domain X
 vsa cert renew
@@ -138,6 +144,23 @@ The API Dockerfile uses the **repo root** as its build context (set in `stacks/d
 
 All stacks join the shared `flowbiz_ext` Docker network for reverse proxy access. Each stack also has its own internal network (e.g., `dashboard-net`) for inter-service communication. No database ports are exposed publicly.
 
+### Storage Strategy
+
+**Two-disk layout** (see `/etc/fstab`):
+- **Root `/`** — OS, configs, bind-mounted config files (vhosts, certs, `.env` files)
+- **`/var/lib/docker` (`/dev/sdb`)** — Docker named volumes (observability data, app data)
+
+**Observability data** uses Docker named volumes (stored on `/dev/sdb`):
+- `obs-prometheus-data` — Prometheus TSDB (capped at 1GB / 15 days)
+- `obs-loki-data` — Loki chunks and indexes (30-day retention)
+- `obs-grafana-data` — Grafana dashboards and state
+- `obs-promtail-data` — Promtail position tracking
+
+**Bind mounts on root `/`** (config and small data only):
+- `/srv/flowbiz/reverse-proxy/` — NGINX vhosts, certs, auth files, access logs
+- `/srv/flowbiz/dashboard/data/` — PostgreSQL data
+- `/srv/flowbiz/observability/data/grafana-provisioning/` — Grafana provisioning configs
+
 ### Data Path Convention
 
 ```
@@ -235,10 +258,12 @@ Agent sync endpoints perform **full reconciliation**, not append-only:
 
 ## Keeping Rules in Sync
 
-After any significant change (new stacks, architectural shifts, new tooling, changed conventions), update **all three**:
+After any significant change (new stacks, architectural shifts, new tooling, changed conventions), update **all of these**:
 - **`CLAUDE.md`** (this file) — for Claude Code
-- **`.cursor/rules/vsa.mdc`** — for Cursor IDE
-- **`docs/architecture.md`** — for human reference
+- **`.cursor/rules/my-custom-rules.mdc`** — for Cursor IDE
+- **`docs/architecture.md`** — high-level architecture for human reference
+- **`docs/low-level-design.md`** — storage, retention, networking, container internals
+- **`README.md`** — project overview and quick start
 
 This ensures all AI assistants and developers stay aligned with the current state of the project.
 
@@ -249,7 +274,7 @@ All 7 phases of the VSA modernization plan have been implemented and committed, 
 ### Completed
 - **Phase 1 — Foundation:** Shared library (`packages/python/vsa-common/`), CLI skeleton, Jinja2 vhost renderer, bcrypt htpasswd service, 30 unit tests
 - **Phase 2 — CLI Core:** All command modules (site, cert, auth, stack, vhost, vps, bootstrap, agent) with audit logging
-- **Phase 3 — Observability:** Loki 90-day retention, Promtail audit scrape pipeline, NGINX rate limiting zones
+- **Phase 3 — Observability:** Loki 30-day retention, Promtail audit scrape pipeline, NGINX rate limiting zones
 - **Phase 4 — Dashboard Backend:** FastAPI + SQLAlchemy async + PostgreSQL, 9 API routers, Alembic migrations (6 tables), Docker SDK integration, multi-stage Dockerfile (repo root build context with `PYTHONPATH`)
 - **Phase 5 — Dashboard Frontend:** Next.js 14 + Tailwind + React Query, 7 pages (overview, containers, domains, certs, audit, traffic, VPS), sidebar nav, status badges, standalone output mode
 - **Phase 6 — Multi-VPS Agent:** systemd service + timer units, agent register/start/status commands, traffic stats sync
@@ -260,6 +285,7 @@ All 7 phases of the VSA modernization plan have been implemented and committed, 
 - **Phase 11 — Comprehensive Unprovision:** `vsa site unprovision` performs 6-step cleanup (vhost, auth, cert, logs, container, nginx reload) with shared container detection and interactive prompts
 - **Phase 12 — Reboot Resilience:** All containers have `restart: unless-stopped`, Docker daemon enabled on boot, verified all 36 containers survive unattended reboot
 - **Phase 13 — Sync Reconciliation & VPS Fleet Management:** Agent sync now performs full reconciliation (stale domains/certs auto-removed after unprovision), audit logs endpoint reads directly from local SQLite (no agent sync dependency for hub events), new `vsa vps` CLI command group (list/add/remove), `DELETE /api/agent/vps/{vps_id}` endpoint
+- **Phase 14 — Storage Architecture:** Observability data moved from bind mounts (`/srv/flowbiz/`) to Docker named volumes (`/var/lib/docker/volumes/` on dedicated disk). Prometheus retention set to 15d/1GB cap. Loki retention reduced from 90d to 30d. Containers run as image-default users (no `user: "1001"` override).
 
 ### Deployed
 - **Dashboard live** at `https://dashboard.flowbiz.ai/` — API + UI + PostgreSQL running on VPS-01, TLS via Let's Encrypt (auto-renew), HTTP Basic Auth (`admin`), NGINX reverse proxy routing `/api/*` to API and `/*` to UI
