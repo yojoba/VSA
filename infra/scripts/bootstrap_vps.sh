@@ -9,7 +9,11 @@ echo "[bootstrap] Install Docker Engine and Compose plugin"
 if ! command -v docker >/dev/null 2>&1; then
   curl -fsSL https://get.docker.com | sh
 fi
-sudo usermod -aG docker "$USER" || true
+# Use SUDO_USER when invoked via `sudo bash`, otherwise USER. The plain
+# $USER resolves to "root" inside a sudo invocation, which would silently
+# add root to the docker group (no-op) instead of the calling user.
+TARGET_USER="${SUDO_USER:-$USER}"
+sudo usermod -aG docker "$TARGET_USER" || true
 
 if ! docker compose version >/dev/null 2>&1; then
   echo "[bootstrap] Docker Compose v2 is included with Docker; ensuring it's available"
