@@ -525,20 +525,11 @@ def site_provision(
         )
 
 
-# Surface a clean error if HUB_URL/AUTH are missing — the underlying
-# HubClientError already has a useful message; let typer print it.
-@app.callback()
-def _check_hub_config(ctx: typer.Context) -> None:
-    """Verify hub config is set before any subcommand runs (except --help)."""
-    if ctx.invoked_subcommand is None:
-        return
-    from vsa.config import get_config
-
-    cfg = get_config()
-    if not cfg.hub_url:
-        raise HubClientError(
-            "VSA_HUB_URL is not set. `vsa fleet …` needs the dashboard API URL. "
-            "Set in /etc/vsa/agent.env: "
-            "VSA_HUB_URL=https://dashboard.flowbiz.ai/api  and  "
-            "VSA_HUB_AUTH=admin:<pass>"
-        )
+# NOTE: a previous version of this file installed a `@app.callback()` that
+# raised HubClientError when VSA_HUB_URL was unset. Typer fires the group
+# callback *before* it resolves `--help`, so `vsa fleet <subcmd> --help`
+# refused to render help unless the env was already configured. The
+# underlying `hub_client._client()` already raises a clean HubClientError
+# with the same message at the point of the first API call, so the eager
+# callback was redundant. Don't reintroduce it without first switching to
+# a non-eager check (e.g. inside each command body).
