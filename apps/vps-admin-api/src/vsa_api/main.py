@@ -9,7 +9,17 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from vsa_api.config import settings
 from vsa_api.db.session import engine, Base
-from vsa_api.routers import containers, domains, certs, audit_logs, stacks, vps, agent, traffic
+from vsa_api.routers import (
+    agent,
+    assignments,
+    audit_logs,
+    certs,
+    containers,
+    domains,
+    stacks,
+    traffic,
+    vps,
+)
 
 
 @asynccontextmanager
@@ -44,6 +54,7 @@ app.include_router(stacks.router, prefix="/api")
 app.include_router(vps.router, prefix="/api")
 app.include_router(agent.router, prefix="/api")
 app.include_router(traffic.router, prefix="/api")
+app.include_router(assignments.router, prefix="/api")
 
 
 @app.get("/api/health")

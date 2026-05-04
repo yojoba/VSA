@@ -4,7 +4,16 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from sqlalchemy import BigInteger, DateTime, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import (
+    JSON,
+    BigInteger,
+    DateTime,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from vsa_api.db.session import Base
@@ -96,6 +105,35 @@ class ContainerSnapshot(Base):
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class DomainAssignment(Base):
+    """Intended placement of a domain across the fleet — primary + standbys.
+
+    Distinct from the agent-synced ``domains`` and ``certificates`` tables
+    (which record observed state per VPS). Edited by hand on the hub via the
+    ``/api/assignments`` endpoint or `vsa fleet assign` CLI command.
+    """
+
+    __tablename__ = "domain_assignments"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    domain: Mapped[str] = mapped_column(
+        String(255), unique=True, nullable=False, index=True
+    )
+    primary_vps_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    standby_vps_ids: Mapped[list[str]] = mapped_column(
+        JSON, nullable=False, default=list, server_default="[]"
+    )
+    notes: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
     )
 
 
