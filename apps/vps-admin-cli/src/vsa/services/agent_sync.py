@@ -71,12 +71,27 @@ def collect_containers() -> list[dict[str, str]]:
         if not line:
             continue
         data = json.loads(line)
+        # Labels come as a comma-separated string like
+        # "com.docker.compose.project=foo,com.docker.compose.service=bar".
+        compose_project = ""
+        compose_service = ""
+        for label in data.get("Labels", "").split(","):
+            key, sep, value = label.partition("=")
+            if not sep:
+                continue
+            key = key.strip()
+            if key == "com.docker.compose.project":
+                compose_project = value.strip()
+            elif key == "com.docker.compose.service":
+                compose_service = value.strip()
         containers.append(
             {
                 "name": data.get("Names", ""),
                 "image": data.get("Image", ""),
                 "status": data.get("Status", ""),
                 "ports": data.get("Ports", ""),
+                "compose_project": compose_project,
+                "compose_service": compose_service,
             }
         )
     return containers

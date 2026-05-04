@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from sqlalchemy import BigInteger, DateTime, Integer, String, Text, func
+from sqlalchemy import BigInteger, DateTime, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from vsa_api.db.session import Base
@@ -27,9 +27,14 @@ class VpsNode(Base):
 
 class Domain(Base):
     __tablename__ = "domains"
+    __table_args__ = (
+        UniqueConstraint("vps_id", "domain", name="uq_domains_vps_domain"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    domain: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    # Note: composite unique with vps_id (see __table_args__) — a single
+    # domain can be pre-positioned on multiple VPS for warm-standby.
+    domain: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     vps_id: Mapped[str] = mapped_column(String(64), nullable=False, default="vps-01")
     container: Mapped[str] = mapped_column(String(255), nullable=False, default="")
     port: Mapped[int] = mapped_column(Integer, nullable=False, default=3000)
@@ -41,9 +46,17 @@ class Domain(Base):
 
 class Certificate(Base):
     __tablename__ = "certificates"
+    __table_args__ = (
+        UniqueConstraint("vps_id", "domain", name="uq_certificates_vps_domain"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    domain: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    # Composite unique with vps_id — same cert may be pre-deployed on a
+    # standby VPS while still active on the primary.
+    domain: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    vps_id: Mapped[str] = mapped_column(
+        String(64), nullable=False, default="vps-01", server_default="vps-01"
+    )
     issuer: Mapped[str] = mapped_column(String(255), nullable=False, default="Let's Encrypt")
     expiry: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="valid")
@@ -75,6 +88,12 @@ class ContainerSnapshot(Base):
     image: Mapped[str] = mapped_column(String(512), nullable=False, default="")
     status: Mapped[str] = mapped_column(String(64), nullable=False, default="")
     ports: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    compose_project: Mapped[str] = mapped_column(
+        String(255), nullable=False, default="", server_default=""
+    )
+    compose_service: Mapped[str] = mapped_column(
+        String(255), nullable=False, default="", server_default=""
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

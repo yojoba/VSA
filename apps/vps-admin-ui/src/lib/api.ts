@@ -15,11 +15,13 @@ async function fetchApi<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export interface Container {
+  vps_id: string;
   name: string;
   image: string;
   status: string;
-  ports: Record<string, unknown>;
-  labels: Record<string, string>;
+  ports: string;
+  compose_project: string;
+  snapshot_at: string | null;
 }
 
 export interface Domain {
@@ -33,6 +35,7 @@ export interface Domain {
 }
 
 export interface Certificate {
+  vps_id: string;
   domain: string;
   issuer: string;
   expiry: string | null;
@@ -70,6 +73,7 @@ export interface VpsNode {
 }
 
 export interface Stack {
+  vps_id: string;
   name: string;
   containers: {
     name: string;

@@ -17,6 +17,7 @@ export default function ContainersPage() {
         <table className="w-full text-sm">
           <thead className="bg-zinc-800/50">
             <tr>
+              <th className="text-left p-3 text-zinc-400 font-medium">VPS</th>
               <th className="text-left p-3 text-zinc-400 font-medium">Name</th>
               <th className="text-left p-3 text-zinc-400 font-medium">Image</th>
               <th className="text-left p-3 text-zinc-400 font-medium">Status</th>
@@ -25,15 +26,14 @@ export default function ContainersPage() {
           </thead>
           <tbody className="divide-y divide-zinc-800">
             {data?.map((c) => (
-              <tr key={c.name} className="hover:bg-zinc-800/30">
+              <tr key={`${c.vps_id}/${c.name}`} className="hover:bg-zinc-800/30">
+                <td className="p-3 text-zinc-300 font-mono text-xs">{c.vps_id}</td>
                 <td className="p-3 text-white font-mono">{c.name}</td>
                 <td className="p-3 text-zinc-400 font-mono text-xs">{c.image}</td>
                 <td className="p-3">
                   <StatusBadge status={c.status} />
                 </td>
-                <td className="p-3 text-zinc-400">
-                  {c.labels["com.docker.compose.project"] || "-"}
-                </td>
+                <td className="p-3 text-zinc-400">{c.compose_project || "-"}</td>
               </tr>
             ))}
           </tbody>

@@ -50,11 +50,20 @@ export default function OverviewPage() {
       <h2 className="text-lg font-semibold text-white mb-4">Stacks</h2>
       <div className="space-y-3">
         {stacks.data?.map((stack) => (
-          <div key={stack.name} className="bg-zinc-900 border border-zinc-800 rounded-lg p-4">
-            <h3 className="font-medium text-white mb-2">{stack.name}</h3>
+          <div
+            key={`${stack.vps_id}/${stack.name}`}
+            className="bg-zinc-900 border border-zinc-800 rounded-lg p-4"
+          >
+            <div className="flex items-baseline gap-2 mb-2">
+              <h3 className="font-medium text-white">{stack.name}</h3>
+              <span className="text-xs text-zinc-500 font-mono">{stack.vps_id}</span>
+            </div>
             <div className="flex flex-wrap gap-2">
               {stack.containers.map((c) => (
-                <div key={c.name} className="flex items-center gap-2 text-sm text-zinc-400">
+                <div
+                  key={`${stack.vps_id}/${c.name}`}
+                  className="flex items-center gap-2 text-sm text-zinc-400"
+                >
                   <StatusBadge status={c.status} />
                   <span>{c.service}</span>
                 </div>

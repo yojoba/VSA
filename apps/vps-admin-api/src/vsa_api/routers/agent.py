@@ -132,6 +132,8 @@ async def agent_containers_sync(
             image=c.get("image", ""),
             status=c.get("status", ""),
             ports=str(c.get("ports", "")),
+            compose_project=c.get("compose_project", ""),
+            compose_service=c.get("compose_service", ""),
         )
         db.add(snapshot)
 
@@ -147,7 +149,9 @@ async def agent_certs_sync(
 ):
     """Receive certificate status from a remote VPS agent (full reconciliation).
 
-    Upserts certs present in the payload and removes stale entries for this VPS.
+    Upserts certs present in the payload for ``payload.vps_id`` and removes
+    stale entries for THAT VPS only — never touching certs owned by other
+    VPS (the same domain can be pre-deployed on a warm-standby host).
     """
     synced_domains: set[str] = set()
     count = 0
@@ -159,7 +163,10 @@ async def agent_certs_sync(
         synced_domains.add(domain)
 
         result = await db.execute(
-            select(Certificate).where(Certificate.domain == domain)
+            select(Certificate).where(
+                Certificate.domain == domain,
+                Certificate.vps_id == payload.vps_id,
+            )
         )
         cert = result.scalar_one_or_none()
 
@@ -178,6 +185,7 @@ async def agent_certs_sync(
         else:
             cert = Certificate(
                 domain=domain,
+                vps_id=payload.vps_id,
                 issuer=cert_data.get("issuer", "Let's Encrypt"),
                 expiry=expiry,
                 status=cert_data.get("status", "valid"),
@@ -185,12 +193,12 @@ async def agent_certs_sync(
             db.add(cert)
         count += 1
 
-    # Remove stale certs: entries for domains no longer reported by this agent
-    stale = await db.execute(
-        select(Certificate).where(
-            Certificate.domain.notin_(synced_domains) if synced_domains else True,
-        )
-    )
+    # Remove stale certs scoped to this VPS only — entries for domains
+    # this agent no longer reports (vhost or cert was deleted on its host).
+    stale_q = select(Certificate).where(Certificate.vps_id == payload.vps_id)
+    if synced_domains:
+        stale_q = stale_q.where(Certificate.domain.notin_(synced_domains))
+    stale = await db.execute(stale_q)
     for orphan in stale.scalars().all():
         await db.delete(orphan)
 
@@ -219,14 +227,16 @@ async def agent_domains_sync(
         synced_domains.add(domain_name)
 
         result = await db.execute(
-            select(Domain).where(Domain.domain == domain_name)
+            select(Domain).where(
+                Domain.domain == domain_name,
+                Domain.vps_id == payload.vps_id,
+            )
         )
         existing = result.scalar_one_or_none()
 
         if existing:
             existing.container = d.get("container", existing.container)
             existing.port = d.get("port", existing.port)
-            existing.vps_id = payload.vps_id
             existing.status = "active"
         else:
             existing = Domain(

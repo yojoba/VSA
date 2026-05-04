@@ -1,41 +1,49 @@
-"""Docker Compose stack status endpoints."""
+"""Docker Compose stack overview — reconstructed from agent snapshots.
+
+A "stack" is the set of containers that share a ``com.docker.compose.project``
+label. Since the same stack name (e.g. ``reverse-proxy``) can run
+independently on multiple VPS, we group by ``(vps_id, compose_project)``
+so each instance appears as a distinct entry.
+"""
 
 from __future__ import annotations
 
-import docker
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from vsa_api.db.session import get_db
+from vsa_api.db.tables import ContainerSnapshot
 
 router = APIRouter(tags=["stacks"])
 
 
-def _get_docker_client():
-    try:
-        return docker.from_env()
-    except docker.errors.DockerException as exc:
-        raise HTTPException(status_code=503, detail=f"Docker unavailable: {exc}") from exc
-
-
 @router.get("/stacks")
-async def list_stacks():
-    """List compose stacks by inspecting container labels."""
-    client = _get_docker_client()
-    containers = client.containers.list(all=True)
+async def list_stacks(db: AsyncSession = Depends(get_db)):
+    """List compose stacks per VPS, grouped from container snapshots."""
+    result = await db.execute(
+        select(ContainerSnapshot)
+        .where(ContainerSnapshot.compose_project != "")
+        .order_by(
+            ContainerSnapshot.vps_id,
+            ContainerSnapshot.compose_project,
+            ContainerSnapshot.container_name,
+        )
+    )
 
-    stacks: dict[str, list[dict]] = {}
-    for c in containers:
-        project = c.labels.get("com.docker.compose.project", "")
-        if not project:
-            continue
-        if project not in stacks:
-            stacks[project] = []
-        stacks[project].append({
-            "name": c.name,
-            "service": c.labels.get("com.docker.compose.service", ""),
-            "status": c.status,
-            "image": str(c.image.tags[0]) if c.image.tags else "",
-        })
+    stacks: dict[tuple[str, str], list[dict]] = {}
+    for c in result.scalars().all():
+        key = (c.vps_id, c.compose_project)
+        stacks.setdefault(key, []).append(
+            {
+                "name": c.container_name,
+                "service": c.compose_service,
+                "status": c.status,
+                "image": c.image,
+            }
+        )
 
     return [
-        {"name": name, "containers": containers}
-        for name, containers in sorted(stacks.items())
+        {"vps_id": vps_id, "name": project, "containers": containers}
+        for (vps_id, project), containers in stacks.items()
     ]

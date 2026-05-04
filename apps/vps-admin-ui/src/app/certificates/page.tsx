@@ -48,6 +48,7 @@ export default function CertificatesPage() {
         <table className="w-full text-sm">
           <thead className="bg-zinc-800/50">
             <tr>
+              <th className="text-left p-3 text-zinc-400 font-medium">VPS</th>
               <th className="text-left p-3 text-zinc-400 font-medium">Domain</th>
               <th className="text-left p-3 text-zinc-400 font-medium">Issuer</th>
               <th className="text-left p-3 text-zinc-400 font-medium">Expiry</th>
@@ -57,7 +58,8 @@ export default function CertificatesPage() {
           </thead>
           <tbody className="divide-y divide-zinc-800">
             {data?.map((c) => (
-              <tr key={c.domain} className="hover:bg-zinc-800/30">
+              <tr key={`${c.vps_id}/${c.domain}`} className="hover:bg-zinc-800/30">
+                <td className="p-3 text-zinc-300 font-mono text-xs">{c.vps_id}</td>
                 <td className="p-3 text-white font-mono">{c.domain}</td>
                 <td className="p-3 text-zinc-400">{c.issuer}</td>
                 <td className="p-3 text-zinc-400">

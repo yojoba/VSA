@@ -1,0 +1,48 @@
+# Lightweight observability agent — Promtail only.
+#
+# Deployed on remote VPS that DON'T host the Loki/Grafana stack.
+# Promtail scrapes local Docker containers + nginx domain access logs
+# and ships them to the central Loki instance over HTTPS+basic-auth.
+#
+# Required env (see .env.example):
+#   VSA_VPS_ID, LOKI_URL, LOKI_BASIC_AUTH_USER, LOKI_BASIC_AUTH_PASSWORD
+#
+# Promtail expands ${VAR} from the environment at boot via -config.expand-env=true.
+
+services:
+  promtail:
+    image: grafana/promtail:3.0.0
+    container_name: observability-agent-promtail
+    restart: unless-stopped
+    env_file:
+      - ./.env
+    command:
+      - -config.file=/etc/promtail/config/promtail-config.yml
+      - -config.expand-env=true
+    volumes:
+      - ./promtail-config.yml:/etc/promtail/config/promtail-config.yml:ro
+      - promtail-data:/var/lib/promtail
+      # System logs (journald, syslog)
+      - /var/log:/var/log:ro
+      # Audit logs from the local vsa CLI (if any)
+      - /var/log/vsa:/var/log/vsa:ro
+      # Reverse-proxy nginx domain logs (JSON format)
+      - /srv/flowbiz:/srv/flowbiz:ro
+      # Docker SD discovery + container log tailing
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - flowbiz_ext
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:9080/ready"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+volumes:
+  promtail-data:
+
+networks:
+  flowbiz_ext:
+    external: true
