@@ -1,0 +1,14 @@
+[Unit]
+Description=VSA Fleet Drift Timer — fire vsa-drift.service daily at 08:00
+Requires=vsa-drift.service
+
+[Timer]
+# Daily at 08:00 local time. Persistent=true makes it catch up if the host
+# was off when the slot fired.
+OnCalendar=*-*-* 08:00:00
+Persistent=true
+RandomizedDelaySec=120
+Unit=vsa-drift.service
+
+[Install]
+WantedBy=timers.target

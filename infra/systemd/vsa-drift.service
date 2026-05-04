@@ -1,0 +1,19 @@
+[Unit]
+Description=VSA Fleet Drift — daily cross-check of intent vs observed state
+After=network-online.target docker.service vsa-agent.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/vsa fleet drift
+EnvironmentFile=/etc/vsa/agent.env
+User=root
+# Captured by journalctl + scraped by Promtail (job=systemd, unit=vsa-drift.service)
+StandardOutput=journal
+StandardError=journal
+# Exit 1 on critical findings becomes a journal failure record — set up an
+# OnFailure= unit later (e.g. a slack/webhook poster) once you want active alerts.
+SuccessExitStatus=0
+
+[Install]
+WantedBy=multi-user.target

@@ -287,6 +287,7 @@ vsa cert install-cron
 - [ADR-006: Hub→Agent Execution Channel](docs/ADRs/006-hub-to-agent-execution.md)
 - [Runbook: Provision a Site](docs/runbooks/provision_site.md)
 - [Runbook: DNS-01 Cloudflare Cert Auto-Renewal](docs/runbooks/dns01_cloudflare.md)
+- [Runbook: Fleet Health Timers (drift + cert-health)](docs/runbooks/fleet_health_timers.md)
 - [Runbook: Observability Agent](docs/runbooks/observability_agent.md)
 - [Runbook: Fleet Access](docs/runbooks/fleet_access.md)
 - [Runbook: Restore](docs/runbooks/restore.md)

@@ -1,0 +1,18 @@
+[Unit]
+Description=VSA Fleet Cert Health — weekly cert-health on every VPS
+After=network-online.target docker.service vsa-agent.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/vsa fleet cert-health --all
+EnvironmentFile=/etc/vsa/agent.env
+User=root
+# Captured by journalctl + scraped by Promtail. Exit 1 if any VPS reported a
+# critical finding (broken symlinks, missing LE account, expired cert).
+StandardOutput=journal
+StandardError=journal
+SuccessExitStatus=0
+
+[Install]
+WantedBy=multi-user.target
