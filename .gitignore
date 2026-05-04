@@ -40,4 +40,10 @@ apps/vps-admin-ui/.next/
 /var/log/vsa/
 /var/lib/vsa/
 
+# Local-only secrets — the repo is PUBLIC, never commit these.
+# Lives only on the operator's mac. Backup elsewhere (1Password, encrypted disk).
+SECRETS.local.md
+*.local.md
+secrets.local.*
+
 

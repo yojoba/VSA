@@ -2,6 +2,80 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Latest Session — 2026-05-04 (Multi-VPS-aware Dashboard)
+
+> **Resume context.** A previous session deployed a coordinated change across the
+> CLI, API, UI, and a new stack to make the dashboard reflect the **whole
+> 3-VPS fleet** (`vps-01` hub + `vps-02` LokalFlash prod + `vps-03` warm standby),
+> not just the host the API runs on. **Read this before touching any of:**
+> `routers/{containers,domains,certs,stacks}.py`, `routers/agent.py`,
+> `db/tables.py`, `services/agent_sync.py:collect_containers`,
+> `stacks/observability/promtail-config.yml`, anything under `stacks/observability-agent/`.
+
+**What landed (commits `dd540b7` + `12bf39c` + `ae28e1e`):**
+- Read endpoints rewritten to query agent-synced PG tables (was
+  `docker.from_env()` / disk scans → hub-only).
+- New schema columns: `ContainerSnapshot.compose_{project,service}`,
+  `Certificate.vps_id`. Migrations `0003` + `0004`. Composite
+  `UNIQUE(vps_id, domain)` on `domains` + `certificates`.
+- New stack `stacks/observability-agent/` (Promtail-only, ships logs to
+  `loki.flowbiz.ai` with basic-auth + IP allow-list). Runs on vps-02 + vps-03.
+- New nginx vhost `loki.flowbiz.ai.conf`. Let's Encrypt cert valid until 2026-08-02.
+- Hub Promtail config now labels every stream with `vps_id: vps-01`.
+- VSA agent **also** installed on the hub (it wasn't before — see footgun).
+- `infra/scripts/setup_observability_agent.sh` orchestrates per-VPS install.
+- See `docs/ADRs/005-multi-vps-aware-dashboard.md` for the architectural
+  rationale and `docs/runbooks/observability_agent.md` for the per-VPS deploy
+  procedure.
+
+**Critical footguns hit during deploy (any future session WILL hit these):**
+1. `vsa cert issue --domain X` adds `www.X` by default → fails LE for technical
+   subdomains. **Always pass `--no-www` for `loki.*`, `dashboard.*`, `grafana.*`,
+   `app.*`, `dev.*`, etc.**
+2. `agent_audit_sync` returns 500 (DataError on the `timestamp` column —
+   asyncpg expects datetime, gets ISO string). Pre-existing, **NOT FIXED**
+   in this session. Containers/domains/certs sync are fine.
+3. `dashboard-api` Dockerfile bug: shebangs of `.venv/bin/*` scripts point
+   at the builder-stage path `/workspace/...` instead of `/app/...`.
+   Run alembic via `docker exec ... /app/.venv/bin/python -m alembic upgrade head`,
+   not `alembic` directly.
+4. `observability-agent-promtail` shows `(unhealthy)` because the healthcheck
+   uses `wget` which isn't in `grafana/promtail:3.0.0`. Functionally fine —
+   logs are tailed and pushed. Replace `wget` with `nc -z localhost 9080` to fix.
+5. `/var/log/vsa/` and `/var/lib/vsa/` are **root-owned** on a fresh VPS
+   (created by the systemd service running as `root`). Interactive `vsa`
+   commands by a non-root user fail with `OperationalError: unable to open
+   database file`. Fix: `sudo chown -R <user>:<user> /var/log/vsa /var/lib/vsa`.
+   Should be added to `bootstrap_vps.sh`.
+6. The hub had **no** local VSA agent until this session — implicit assumption
+   that "the hub is itself, no need to push". Wrong: the dashboard reads from
+   the same table everyone pushes to. Fixed: hub now runs `vsa-agent.timer`
+   (user `fgrosal`, `VSA_VPS_ID=vps-01`).
+
+**Final dashboard state after the session:**
+
+| Endpoint        | Total | Per VPS                                |
+| --------------- | ----- | -------------------------------------- |
+| `/containers`   | 44    | vps-01: 35, vps-02: 8, vps-03: 1       |
+| `/domains`      | 39    | vps-01: 13, vps-02: 13, vps-03: 13     |
+| `/certs`        | 26    | vps-01: 22, vps-02: 4, vps-03: 0       |
+| `/stacks`       | 18    | vps-01: 14, vps-02: 3, vps-03: 1       |
+
+Loki labels: `{vps_id="vps-01"}`, `{vps_id="vps-02"}`, `{vps_id="vps-03"}` all populated.
+
+**WIP branch on flowbiz-1 only** (NOT pushed anywhere): `wip/deployer-on-flowbiz1`.
+Contains the in-progress `apps/deployer/` + `stacks/deployer/` projects (a
+GitHub-webhook-driven git-pull-and-redeploy mini-PaaS) plus 6 new vhosts
+(`app.lokalflash.ch`, `lokalflash.ch`, `lokalflash.com`, `deploy.flowbiz.ai`,
+`jobprospectai.flowbiz.ai`, `lopez.flowbiz.ai`) and improvements to
+`routers/domains.py` (extracted `scan_active_domains()`,
+`_parse_upstream()` helpers — superseded by this session's SQL-based rewrite,
+the local helpers can be cherry-picked or dropped). The `deployer` container
+keeps running through `git checkout` because its data lives in
+`/srv/flowbiz/deployer/` (not in the repo).
+
+---
+
 ## Project Overview
 
 **FlowBiz VPS Admin Suite (VSA)** — A monorepo for managing multi-tenant hosting on Infomaniak VPS (primary) and Kamatera (legacy). Orchestrates Docker Compose stacks for AI apps (Dify, n8n, local LLMs) and customer websites behind an NGINX reverse proxy with Let's Encrypt SSL automation.
@@ -198,7 +272,10 @@ All renewal configs live in `/srv/flowbiz/reverse-proxy/letsencrypt/renewal/<dom
 
 ### Multi-VPS Strategy (Hub-and-Agent)
 
-VPS-01 hosts the dashboard (hub). Additional VPS nodes run the CLI with `vsa agent` subcommand:
+**Every VPS in the fleet — including the hub itself — runs `vsa agent`.** The hub
+ran the dashboard but had no local agent until the 2026-05-04 session, which
+left vps-01 underrepresented in the dashboard tables. Don't repeat that mistake.
+
 - `vsa agent register --hub-url https://dashboard.flowbiz.ai/api --token XXX`
 - `vsa agent start` (via systemd timer, every 30s)
 - Sends heartbeats, container snapshots, cert status, traffic stats, and audit events to hub
@@ -211,7 +288,61 @@ VPS-01 hosts the dashboard (hub). Additional VPS nodes run the CLI with `vsa age
 **Adding a new VPS to the system:**
 1. On the hub: `vsa vps add --id vps-02 --hostname newserver --ip 1.2.3.4`
 2. On the new VPS: install CLI, then `vsa agent register --hub-url ... --token ...`
-3. On the new VPS: `vsa agent start` (systemd timer takes over, syncs every 30s)
+3. On the new VPS: ensure `/var/log/vsa/` and `/var/lib/vsa/` exist and are
+   `chown`-ed to the user that runs the systemd unit (or to root + run unit as
+   root). The agent will silently fail with `OperationalError: unable to open
+   database file` if these are missing or unwritable.
+4. On the new VPS: enable the systemd timer — it takes over and syncs every 30s.
+5. (Optional but recommended) Deploy the `observability-agent` stack so the
+   new VPS ships its container/nginx/audit logs to the central Loki — see
+   `docs/runbooks/observability_agent.md`.
+
+### Multi-VPS Dashboard Read Path (Tier 1+2, since 2026-05-04)
+
+The dashboard read endpoints (`/containers`, `/domains`, `/certs`, `/stacks`)
+**no longer scan the local Docker socket / nginx config dir / Let's Encrypt
+store**. They query the agent-synced PostgreSQL tables (`container_snapshots`,
+`domains`, `certificates`) populated by the existing `/agent/*-sync` endpoints.
+Every response carries `vps_id`. Freshness is bounded by the agent tick (~30s).
+
+Schema invariants worth knowing:
+- `container_snapshots` has `compose_project` and `compose_service` columns
+  (extracted by `collect_containers` from the `Labels` field returned by
+  `docker ps --format '{{json .}}'`).
+- `domains` and `certificates` use composite `UNIQUE(vps_id, domain)`, NOT
+  `UNIQUE(domain)`. This lets the same cert/vhost coexist on the primary VPS
+  and a warm-standby VPS — important for the LokalFlash flowbiz-2/flowbiz-3
+  active/standby pair.
+- `agent_certs_sync` and `agent_domains_sync` perform stale-removal scoped by
+  `vps_id`. Don't reintroduce an unscoped `WHERE domain NOT IN (...)` — it
+  would let one agent wipe another VPS's records.
+
+### Multi-VPS Log Shipping (Tier 3, since 2026-05-04)
+
+Remote VPS (everything except the hub) run the lightweight
+`stacks/observability-agent/` (Promtail-only, ~50 MB RAM). They push logs
+to the hub's Loki over **HTTPS + basic auth + IP allow-list**:
+
+- Vhost: `loki.flowbiz.ai` proxies to `observability-loki-1:3100` on the hub.
+- Auth: `auth_basic` against `/etc/nginx/auth/loki.flowbiz.ai.htpasswd`,
+  defence-in-depth on top of the IP allow-list (which lists each VPS public
+  IP and `deny all` otherwise).
+- Each Promtail emits labels: static `vps_id`, plus `container`,
+  `compose_project`, `compose_service`, `stream` from `docker_sd_configs`,
+  plus `domain`, `method`, `status` extracted from JSON nginx logs.
+
+**The hub** runs the older `stacks/observability/` (Loki + Grafana +
+Prometheus + Promtail). The hub Promtail also has `vps_id: vps-01` on every
+job, so its streams are filterable too.
+
+**To rotate the Loki basic-auth password:** regenerate the bcrypt hash
+in `/srv/flowbiz/reverse-proxy/nginx/auth/loki.flowbiz.ai.htpasswd` on the hub,
+then update `LOKI_BASIC_AUTH_PASSWORD` in `/srv/flowbiz/observability-agent/env/.env`
+on every agent VPS, then `vsa stack up observability-agent` on each.
+
+**To add a new VPS to the allow-list:** edit `stacks/reverse-proxy/nginx/conf.d/loki.flowbiz.ai.conf`,
+add the new `allow X.X.X.X;` line, push, pull on the hub, copy to
+`/srv/flowbiz/reverse-proxy/nginx/conf.d/`, `docker exec reverse-proxy-nginx nginx -s reload`.
 
 ### Agent Sync Reconciliation
 
