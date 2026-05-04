@@ -16,7 +16,11 @@ services:
       - /srv/flowbiz/reverse-proxy/certbot-www:/var/www/certbot
       - /srv/flowbiz/reverse-proxy/logs:/var/log/nginx
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost/healthz"]
+      # Use 127.0.0.1 explicitly: in alpine, `localhost` may resolve only
+      # to ::1 (IPv6) but nginx's `listen 80` is IPv4-only by default,
+      # which made the healthcheck fail with "Connection refused" even
+      # though /healthz works fine over IPv4.
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/healthz"]
       interval: 30s
       timeout: 5s
       retries: 5
