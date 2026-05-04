@@ -69,6 +69,12 @@ class Certificate(Base):
     issuer: Mapped[str] = mapped_column(String(255), nullable=False, default="Let's Encrypt")
     expiry: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="valid")
+    # Subject Alternative Names — populated by the agent from `openssl x509 -ext
+    # subjectAltName`. Includes the primary CN; lets the fleet drift endpoint
+    # know one cert can cover multiple names (apex + www, etc.).
+    sans: Mapped[list[str]] = mapped_column(
+        JSON, nullable=False, default=list, server_default="[]"
+    )
 
 
 class AuditLog(Base):

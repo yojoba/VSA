@@ -203,10 +203,15 @@ async def agent_certs_sync(
             except (ValueError, TypeError):
                 pass
 
+        sans = cert_data.get("sans") or []
+        if not isinstance(sans, list):
+            sans = []
+
         if cert:
             cert.issuer = cert_data.get("issuer", "Let's Encrypt")
             cert.expiry = expiry
             cert.status = cert_data.get("status", "valid")
+            cert.sans = sans
         else:
             cert = Certificate(
                 domain=domain,
@@ -214,6 +219,7 @@ async def agent_certs_sync(
                 issuer=cert_data.get("issuer", "Let's Encrypt"),
                 expiry=expiry,
                 status=cert_data.get("status", "valid"),
+                sans=sans,
             )
             db.add(cert)
         count += 1

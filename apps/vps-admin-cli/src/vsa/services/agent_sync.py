@@ -97,12 +97,41 @@ def collect_containers() -> list[dict[str, str]]:
     return containers
 
 
-def collect_certificates(letsencrypt_live_dir: Path) -> list[dict[str, str]]:
+def _read_cert_sans(cert_path: Path) -> list[str]:
+    """Extract Subject Alternative Names from a cert via ``openssl x509``.
+
+    Returns the list of DNS names in the SAN extension, or an empty list
+    on any parse error. Caller is responsible for prepending the primary
+    CN if it isn't already in the SAN list.
+    """
+    result = subprocess.run(
+        ["openssl", "x509", "-noout", "-ext", "subjectAltName", "-in", str(cert_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return []
+    sans: list[str] = []
+    for line in result.stdout.splitlines():
+        line = line.strip()
+        if not line.startswith("DNS:") and "DNS:" not in line:
+            continue
+        for part in line.split(","):
+            part = part.strip()
+            if part.startswith("DNS:"):
+                sans.append(part[4:].strip())
+    return sans
+
+
+def collect_certificates(letsencrypt_live_dir: Path) -> list[dict[str, Any]]:
     """List certificate info by running openssl on the host filesystem.
 
     Iterates over ``<letsencrypt_live_dir>/<domain>/cert.pem`` and invokes
     ``openssl x509 -noout -enddate`` directly. The agent runs as root, which
     is required to traverse the Let's Encrypt ``live/`` directory (mode 0700).
+    Also extracts Subject Alternative Names so the fleet drift endpoint can
+    treat ``www.<apex>`` as covered by the apex cert.
 
     Was previously implemented via ``docker compose exec nginx openssl …``,
     but ``nginx:1.25-alpine`` does not ship openssl, so every cert ended up
@@ -112,7 +141,7 @@ def collect_certificates(letsencrypt_live_dir: Path) -> list[dict[str, str]]:
     if not letsencrypt_live_dir.is_dir():
         return []
 
-    lines: list[str] = []
+    out: list[dict[str, Any]] = []
     for entry in sorted(letsencrypt_live_dir.iterdir()):
         if not entry.is_dir() or entry.name == "README":
             continue
@@ -127,9 +156,20 @@ def collect_certificates(letsencrypt_live_dir: Path) -> list[dict[str, str]]:
         )
         if result.returncode != 0 or "=" not in result.stdout:
             continue
-        expiry = result.stdout.split("=", 1)[1].strip()
-        lines.append(f"{entry.name}|{expiry}")
-    return parse_cert_output("\n".join(lines))
+        expiry_raw = result.stdout.split("=", 1)[1].strip()
+
+        sans = _read_cert_sans(cert)
+        # Always include the cert's directory name (== primary CN) in sans
+        # so consumers don't have to special-case it.
+        if entry.name not in sans:
+            sans.insert(0, entry.name)
+
+        parsed = parse_cert_output(f"{entry.name}|{expiry_raw}")
+        if parsed:
+            row = parsed[0]
+            row["sans"] = sans
+            out.append(row)
+    return out
 
 
 def parse_cert_output(raw: str) -> list[dict[str, str]]:

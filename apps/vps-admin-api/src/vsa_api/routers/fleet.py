@@ -67,6 +67,36 @@ async def fleet_drift(db: AsyncSession = Depends(get_db)):
     for d in domains:
         domain_vps_ids.setdefault(d.domain, set()).add(d.vps_id)
 
+    # SAN-aware lookups: a vhost or cert that names www.X also serves X (and
+    # vice-versa). For each (vps_id), collect the union of all primary CNs +
+    # SANs across the certs observed there. Drift queries consult these sets
+    # before flagging a domain as missing.
+    sans_by_vps: dict[str, set[str]] = {}
+    cert_owner_by_pair: dict[tuple[str, str], Certificate] = dict(cert_by_pair)
+    for c in certs:
+        names = {c.domain, *(c.sans or [])}
+        sans_by_vps.setdefault(c.vps_id, set()).update(names)
+        for name in names:
+            cert_owner_by_pair.setdefault((name, c.vps_id), c)
+
+    # Vhosts can also serve multiple names (server_name a.com www.a.com)
+    # but the agent only reports the file's stem today. As a heuristic,
+    # treat domains observed without their `www.` sibling — and vice
+    # versa — as covered when one of the pair exists. Stronger fix would
+    # be to have the agent emit each `server_name` token; v2.
+    domain_aliases_by_vps: dict[str, set[str]] = {}
+    for vps_id, names in [(d.vps_id, d.domain) for d in domains]:
+        domain_aliases_by_vps.setdefault(vps_id, set()).add(names)
+    # Add www-pair aliases per VPS
+    for vps_id, names in list(domain_aliases_by_vps.items()):
+        extras: set[str] = set()
+        for n in list(names):
+            if n.startswith("www."):
+                extras.add(n[4:])
+            else:
+                extras.add(f"www.{n}")
+        domain_aliases_by_vps[vps_id] = names | extras
+
     now = datetime.now(timezone.utc)
     warning_cutoff = now + timedelta(days=WARNING_DAYS)
     critical_cutoff = now + timedelta(days=CRITICAL_DAYS)
@@ -78,8 +108,8 @@ async def fleet_drift(db: AsyncSession = Depends(get_db)):
         assigned_domains.add(a.domain)
         expected_vps_ids = {a.primary_vps_id, *(a.standby_vps_ids or [])}
 
-        # missing-on-primary
-        if (a.domain, a.primary_vps_id) not in domain_by_pair:
+        # missing-on-primary — but treat the www/apex pair as one
+        if a.domain not in domain_aliases_by_vps.get(a.primary_vps_id, set()):
             findings.append(
                 _finding(
                     "critical",
@@ -92,7 +122,7 @@ async def fleet_drift(db: AsyncSession = Depends(get_db)):
 
         # missing-on-standby
         for sb in a.standby_vps_ids or []:
-            if (a.domain, sb) not in domain_by_pair:
+            if a.domain not in domain_aliases_by_vps.get(sb, set()):
                 findings.append(
                     _finding(
                         "warning",
@@ -103,7 +133,8 @@ async def fleet_drift(db: AsyncSession = Depends(get_db)):
                     )
                 )
 
-        # rogue-host
+        # rogue-host (use observed-vhost domain set, not aliases — a real
+        # vhost file existing somewhere unexpected is the actual concern)
         for vps_id in domain_vps_ids.get(a.domain, set()) - expected_vps_ids:
             findings.append(
                 _finding(
@@ -115,9 +146,12 @@ async def fleet_drift(db: AsyncSession = Depends(get_db)):
                 )
             )
 
-        # cert checks per expected VPS
+        # cert checks per expected VPS — SAN-aware lookup
         for vps_id in expected_vps_ids:
-            cert = cert_by_pair.get((a.domain, vps_id))
+            cert = cert_owner_by_pair.get((a.domain, vps_id))
+            if cert is None and a.domain in sans_by_vps.get(vps_id, set()):
+                # Defensive: shouldn't happen given how cert_owner_by_pair is built
+                continue
             if cert is None:
                 level = "critical" if vps_id == a.primary_vps_id else "warning"
                 kind = "primary-cert-missing" if vps_id == a.primary_vps_id else "standby-cert-missing"
@@ -166,8 +200,17 @@ async def fleet_drift(db: AsyncSession = Depends(get_db)):
                         )
                     )
 
-    # domain-without-assignment — observed domains not in the registry
-    for domain in sorted(set(domain_vps_ids) - assigned_domains):
+    # domain-without-assignment — observed domains not in the registry.
+    # Suppress when the domain is the www. or apex sibling of an already-
+    # assigned domain (those are covered by SAN/server_name aliasing).
+    aliased_assigned: set[str] = set()
+    for d in assigned_domains:
+        aliased_assigned.add(d)
+        if d.startswith("www."):
+            aliased_assigned.add(d[4:])
+        else:
+            aliased_assigned.add(f"www.{d}")
+    for domain in sorted(set(domain_vps_ids) - aliased_assigned):
         for vps_id in sorted(domain_vps_ids[domain]):
             findings.append(
                 _finding(

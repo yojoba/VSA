@@ -36,6 +36,7 @@ def _serialize(c: Certificate) -> dict[str, object]:
         "expiry": c.expiry.isoformat() if c.expiry else None,
         "days_remaining": _days_remaining(c.expiry),
         "status": c.status,
+        "sans": list(c.sans or []),
     }
 
 
