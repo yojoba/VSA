@@ -79,5 +79,25 @@ class VsaConfig(BaseModel):
         return self.reverse_proxy_dir / "compose.yml"
 
     @property
+    def reverse_proxy_dns_cloudflare_compose(self) -> Path:
+        return self.reverse_proxy_dir / "compose.dns-cloudflare.yml"
+
+    @property
+    def letsencrypt_dir(self) -> Path:
+        return self.srv_base / "reverse-proxy" / "letsencrypt"
+
+    @property
     def letsencrypt_live_dir(self) -> Path:
-        return self.srv_base / "reverse-proxy" / "letsencrypt" / "live"
+        return self.letsencrypt_dir / "live"
+
+    @property
+    def letsencrypt_renewal_dir(self) -> Path:
+        return self.letsencrypt_dir / "renewal"
+
+    @property
+    def letsencrypt_accounts_dir(self) -> Path:
+        return self.letsencrypt_dir / "accounts"
+
+    @property
+    def cloudflare_credentials(self) -> Path:
+        return self.srv_base / "reverse-proxy" / "cloudflare" / "cloudflare.ini"

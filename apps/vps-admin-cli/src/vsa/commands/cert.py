@@ -14,22 +14,54 @@ app = typer.Typer(no_args_is_help=True)
 console = Console()
 
 
+_VALID_CHALLENGES = ("http-webroot", "dns-cloudflare")
+
+
 @app.command()
 def issue(
     domain: str = typer.Option(..., help="Domain to issue certificate for"),
     no_www: bool = typer.Option(False, "--no-www", help="Skip www subdomain"),
+    challenge: str = typer.Option(
+        "http-webroot",
+        "--challenge",
+        help=(
+            "Let's Encrypt challenge type. 'http-webroot' (default) requires "
+            "the running reverse-proxy to serve /.well-known/acme-challenge/. "
+            "'dns-cloudflare' uses the Cloudflare API token at "
+            "/srv/flowbiz/reverse-proxy/cloudflare/cloudflare.ini — required "
+            "for warm-standby VPS where domains DNS-resolve elsewhere."
+        ),
+    ),
 ) -> None:
     """Issue a Let's Encrypt certificate for a domain."""
+    if challenge not in _VALID_CHALLENGES:
+        raise typer.BadParameter(
+            f"Unknown challenge {challenge!r}. Must be one of: "
+            f"{', '.join(_VALID_CHALLENGES)}"
+        )
+
     cfg = get_config()
 
-    with audit("cert.issue", target=domain):
+    cf_credentials = cfg.cloudflare_credentials if challenge == "dns-cloudflare" else None
+    cf_override = (
+        cfg.reverse_proxy_dns_cloudflare_compose if challenge == "dns-cloudflare" else None
+    )
+
+    with audit(
+        "cert.issue",
+        target=domain,
+        params={"challenge": challenge, "include_www": not no_www},
+    ):
         certbot.issue_cert(
             cfg.reverse_proxy_compose,
             domain,
             include_www=not no_www,
             email=cfg.certbot_email,
+            challenge=challenge,
+            cf_credentials_path=cf_credentials,
+            cf_override_compose=cf_override,
         )
-        console.print(f"[green]Certificate issued for {domain}[/green]")
+        console.print(f"[green]Certificate issued for {domain} via {challenge}[/green]")
 
 
 @app.command()
@@ -48,21 +80,62 @@ def renew() -> None:
 
 @app.command()
 def status() -> None:
-    """Show certificate status for all domains."""
+    """Show certificate status for all domains (reads host LE store)."""
     cfg = get_config()
-    output = certbot.list_certs(cfg.reverse_proxy_compose)
+    rows = certbot.list_certs(cfg.letsencrypt_live_dir)
 
-    table = Table(title="SSL Certificates")
+    table = Table(title=f"SSL Certificates ({cfg.vps_id})")
     table.add_column("Domain", style="cyan")
     table.add_column("Expires", style="yellow")
 
-    for line in output.strip().splitlines():
-        line = line.strip()
-        if "|" in line:
-            domain, expiry = line.split("|", 1)
-            table.add_row(domain.strip(), expiry.strip())
+    for domain, expiry in rows:
+        table.add_row(domain, expiry)
+
+    if not rows:
+        console.print("[dim]No certificates found.[/dim]")
+        return
+    console.print(table)
+
+
+@app.command()
+def health() -> None:
+    """Diagnose the local Let's Encrypt store for known issues.
+
+    Flags broken symlinks (the vps-02 footgun), missing prod LE account,
+    expired or soon-to-expire certs, and certs without a matching renewal
+    config. Exits non-zero if any critical finding (suitable for cron).
+    """
+    cfg = get_config()
+    findings = certbot.health_report(cfg.letsencrypt_dir)
+
+    if not findings:
+        console.print(f"[green]✓ All certificates healthy on {cfg.vps_id}.[/green]")
+        return
+
+    critical = sum(1 for f in findings if f["level"] == "critical")
+    warning = sum(1 for f in findings if f["level"] == "warning")
+
+    table = Table(title=f"Certificate Health ({cfg.vps_id})")
+    table.add_column("Level", style="bold")
+    table.add_column("Kind")
+    table.add_column("Domain")
+    table.add_column("Issue")
+
+    for f in findings:
+        level_color = {"critical": "red", "warning": "yellow"}.get(f["level"], "white")
+        table.add_row(
+            f"[{level_color}]{f['level']}[/{level_color}]",
+            f["kind"],
+            f["domain"] or "-",
+            f["message"],
+        )
 
     console.print(table)
+    console.print(
+        f"[bold]Summary:[/bold] {critical} critical, {warning} warning"
+    )
+    if critical > 0:
+        raise typer.Exit(1)
 
 
 @app.command(name="install-cron")
