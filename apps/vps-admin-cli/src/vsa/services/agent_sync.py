@@ -97,30 +97,39 @@ def collect_containers() -> list[dict[str, str]]:
     return containers
 
 
-def collect_certificates(compose_file: Path) -> list[dict[str, str]]:
-    """List certificate info by running openssl inside the nginx container."""
-    result = subprocess.run(
-        [
-            "docker", "compose", "-f", str(compose_file),
-            "exec", "-T", "nginx",
-            "sh", "-c",
-            (
-                'for dir in /etc/letsencrypt/live/*/; do '
-                '[ -d "$dir" ] || continue; '
-                'domain=$(basename "$dir"); '
-                '[ "$domain" = "README" ] && continue; '
-                'cert="$dir/cert.pem"; '
-                'if [ -f "$cert" ]; then '
-                'expiry=$(openssl x509 -noout -enddate -in "$cert" 2>/dev/null | cut -d= -f2); '
-                'echo "$domain|$expiry"; '
-                "fi; done"
-            ),
-        ],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    return parse_cert_output(result.stdout)
+def collect_certificates(letsencrypt_live_dir: Path) -> list[dict[str, str]]:
+    """List certificate info by running openssl on the host filesystem.
+
+    Iterates over ``<letsencrypt_live_dir>/<domain>/cert.pem`` and invokes
+    ``openssl x509 -noout -enddate`` directly. The agent runs as root, which
+    is required to traverse the Let's Encrypt ``live/`` directory (mode 0700).
+
+    Was previously implemented via ``docker compose exec nginx openssl …``,
+    but ``nginx:1.25-alpine`` does not ship openssl, so every cert ended up
+    with an empty expiry. Reading from the host bind-mount avoids the dependency
+    on whatever utilities happen to be in the proxy image.
+    """
+    if not letsencrypt_live_dir.is_dir():
+        return []
+
+    lines: list[str] = []
+    for entry in sorted(letsencrypt_live_dir.iterdir()):
+        if not entry.is_dir() or entry.name == "README":
+            continue
+        cert = entry / "cert.pem"
+        if not cert.is_file():
+            continue
+        result = subprocess.run(
+            ["openssl", "x509", "-noout", "-enddate", "-in", str(cert)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode != 0 or "=" not in result.stdout:
+            continue
+        expiry = result.stdout.split("=", 1)[1].strip()
+        lines.append(f"{entry.name}|{expiry}")
+    return parse_cert_output("\n".join(lines))
 
 
 def parse_cert_output(raw: str) -> list[dict[str, str]]:
@@ -243,8 +252,7 @@ def sync_containers(client: httpx.Client, hub_url: str) -> None:
 
 def sync_certificates(client: httpx.Client, hub_url: str) -> None:
     cfg = get_config()
-    compose_file = cfg.reverse_proxy_compose
-    certs = collect_certificates(compose_file)
+    certs = collect_certificates(cfg.letsencrypt_live_dir)
     resp = _post(
         client,
         f"{hub_url}/agent/certs-sync",

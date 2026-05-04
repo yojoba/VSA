@@ -77,3 +77,7 @@ class VsaConfig(BaseModel):
     @property
     def reverse_proxy_compose(self) -> Path:
         return self.reverse_proxy_dir / "compose.yml"
+
+    @property
+    def letsencrypt_live_dir(self) -> Path:
+        return self.srv_base / "reverse-proxy" / "letsencrypt" / "live"
