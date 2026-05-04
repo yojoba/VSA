@@ -263,7 +263,13 @@ def sync_certificates(client: httpx.Client, hub_url: str) -> None:
 
 def sync_domains(client: httpx.Client, hub_url: str) -> None:
     cfg = get_config()
-    vhost_dir = cfg.repo_vhost_dir
+    # Read what is *actually deployed* (the bind-mount NGINX serves), not the
+    # git checkout — those diverge whenever a VPS hosts only a subset of the
+    # repo's vhosts (the warm-standby case). Falls back to the repo dir if
+    # the mount doesn't exist yet (fresh VPS, before first `vsa vhost sync`).
+    vhost_dir = (
+        cfg.mount_vhost_dir if cfg.mount_vhost_dir.is_dir() else cfg.repo_vhost_dir
+    )
     domains = collect_domains(vhost_dir)
     resp = _post(
         client,
