@@ -10,6 +10,7 @@ import {
   ScrollText,
   Server,
   Activity,
+  Network,
 } from "lucide-react";
 
 const navItems = [
@@ -17,6 +18,7 @@ const navItems = [
   { href: "/containers", label: "Containers", icon: Box },
   { href: "/domains", label: "Domains", icon: Globe },
   { href: "/certificates", label: "Certificates", icon: ShieldCheck },
+  { href: "/assignments", label: "Assignments", icon: Network },
   { href: "/traffic", label: "Traffic", icon: Activity },
   { href: "/audit", label: "Audit Logs", icon: ScrollText },
   { href: "/vps", label: "VPS Nodes", icon: Server },

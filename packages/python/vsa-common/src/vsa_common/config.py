@@ -41,6 +41,14 @@ class VsaConfig(BaseModel):
     log_dir: Path = Field(default=LOG_DIR)
     audit_jsonl_path: Path = Field(default=AUDIT_JSONL_PATH)
     audit_db_path: Path = Field(default=AUDIT_DB_PATH)
+    # Hub API client config — used by `vsa fleet …` commands. Empty when
+    # this VSA install isn't expected to talk to a hub (eg. a dev box).
+    hub_url: str = Field(
+        default_factory=lambda: os.environ.get("VSA_HUB_URL", "")
+    )
+    hub_auth: str = Field(
+        default_factory=lambda: os.environ.get("VSA_HUB_AUTH", "")
+    )
 
     @property
     def stack_dir(self) -> Path:

@@ -96,6 +96,16 @@ export interface TrafficStat {
   period_end: string | null;
 }
 
+export interface DomainAssignment {
+  id: number;
+  domain: string;
+  primary_vps_id: string;
+  standby_vps_ids: string[];
+  notes: string;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
 export interface TrafficLogEntry {
   time: string;
   domain: string;
@@ -124,4 +134,5 @@ export const api = {
     fetchApi<TrafficStat[]>(`/traffic/stats${params ? `?${params}` : ""}`),
   getTrafficLogs: (params: string) =>
     fetchApi<TrafficLogEntry[]>(`/traffic/logs?${params}`),
+  getAssignments: () => fetchApi<DomainAssignment[]>("/assignments"),
 };
