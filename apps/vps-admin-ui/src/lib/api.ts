@@ -96,6 +96,19 @@ export interface TrafficStat {
   period_end: string | null;
 }
 
+export interface FleetFinding {
+  level: "critical" | "warning" | "info";
+  kind: string;
+  domain: string | null;
+  vps_id: string | null;
+  message: string;
+}
+
+export interface FleetDriftReport {
+  summary: { critical: number; warning: number; info: number; total: number };
+  findings: FleetFinding[];
+}
+
 export interface DomainAssignment {
   id: number;
   domain: string;
@@ -135,4 +148,5 @@ export const api = {
   getTrafficLogs: (params: string) =>
     fetchApi<TrafficLogEntry[]>(`/traffic/logs?${params}`),
   getAssignments: () => fetchApi<DomainAssignment[]>("/assignments"),
+  getFleetDrift: () => fetchApi<FleetDriftReport>("/fleet/drift"),
 };

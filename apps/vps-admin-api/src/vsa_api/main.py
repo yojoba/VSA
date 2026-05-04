@@ -16,6 +16,7 @@ from vsa_api.routers import (
     certs,
     containers,
     domains,
+    fleet,
     stacks,
     traffic,
     vps,
@@ -55,6 +56,7 @@ app.include_router(vps.router, prefix="/api")
 app.include_router(agent.router, prefix="/api")
 app.include_router(traffic.router, prefix="/api")
 app.include_router(assignments.router, prefix="/api")
+app.include_router(fleet.router, prefix="/api")
 
 
 @app.get("/api/health")

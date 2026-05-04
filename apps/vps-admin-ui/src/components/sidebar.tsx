@@ -11,10 +11,12 @@ import {
   Server,
   Activity,
   Network,
+  HeartPulse,
 } from "lucide-react";
 
 const navItems = [
   { href: "/", label: "Overview", icon: LayoutDashboard },
+  { href: "/health", label: "Fleet Health", icon: HeartPulse },
   { href: "/containers", label: "Containers", icon: Box },
   { href: "/domains", label: "Domains", icon: Globe },
   { href: "/certificates", label: "Certificates", icon: ShieldCheck },

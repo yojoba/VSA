@@ -297,6 +297,53 @@ def cert_health(
         raise typer.Exit(1)
 
 
+@app.command()
+def drift(
+    show_info: bool = typer.Option(
+        False, "--show-info", help="Include 'info' findings (e.g. domains without assignments)"
+    ),
+) -> None:
+    """Cross-check intent (assignments) vs observed (domains/certs) across the fleet.
+
+    Exits non-zero if any critical findings (suitable for cron / CI gates).
+    """
+    report = hub_client.fleet_drift()
+    summary = report["summary"]
+    findings = [f for f in report["findings"] if show_info or f["level"] != "info"]
+
+    if not findings:
+        console.print(
+            f"[green]✓ Fleet healthy[/green] — {summary['critical']} critical, "
+            f"{summary['warning']} warning, {summary['info']} info"
+        )
+        return
+
+    table = Table(title=f"Fleet Drift Report ({summary['total']} total findings)")
+    table.add_column("Level", style="bold")
+    table.add_column("Kind")
+    table.add_column("Domain", style="cyan")
+    table.add_column("VPS")
+    table.add_column("Detail")
+
+    for f in findings:
+        color = {"critical": "red", "warning": "yellow", "info": "dim"}.get(f["level"], "white")
+        table.add_row(
+            f"[{color}]{f['level']}[/{color}]",
+            f["kind"],
+            f["domain"] or "-",
+            f["vps_id"] or "-",
+            f["message"],
+        )
+
+    console.print(table)
+    console.print(
+        f"\n[bold]Summary:[/bold] {summary['critical']} critical, "
+        f"{summary['warning']} warning, {summary['info']} info"
+    )
+    if summary["critical"] > 0:
+        raise typer.Exit(1)
+
+
 @app.command("site-provision")
 def site_provision(
     domain: str = typer.Option(..., help="Domain name"),

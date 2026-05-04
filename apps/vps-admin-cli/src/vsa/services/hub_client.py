@@ -97,6 +97,14 @@ def list_domains() -> list[dict[str, Any]]:
         return resp.json()
 
 
+def fleet_drift() -> dict[str, Any]:
+    """GET /fleet/drift — fetch the fleet-wide drift report."""
+    with _client() as client:
+        resp = client.get("/fleet/drift")
+        _check(resp)
+        return resp.json()
+
+
 # ---------------------------------------------------------------------------
 # Hub→agent execution channel (Phase C)
 # ---------------------------------------------------------------------------
