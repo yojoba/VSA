@@ -61,11 +61,28 @@ def provision(
     external_port: Optional[int] = typer.Option(None, help="Published host port (for --detect)"),
     no_www: bool = typer.Option(False, "--no-www", help="Skip www subdomain"),
     skip_cert: bool = typer.Option(False, "--skip-cert", help="Skip SSL certificate issuance"),
+    standby: bool = typer.Option(
+        False,
+        "--standby",
+        help=(
+            "Warm-standby mode: skip container network attach (the upstream "
+            "container is expected to live on the primary VPS, not here), "
+            "issue cert via DNS-01 Cloudflare (HTTP-01 would fail because "
+            "DNS doesn't point at this host), and skip the intermediate "
+            "HTTP-only vhost step."
+        ),
+    ),
 ) -> None:
     """Provision a site behind the reverse proxy with SSL."""
     cfg = get_config()
 
-    with audit("site.provision", target=domain, port=port, container=container or "auto") as event:
+    with audit(
+        "site.provision",
+        target=domain,
+        port=port,
+        container=container or "auto",
+        standby=standby,
+    ) as event:
         # Step 0: Detect container if requested
         if detect:
             if external_port is None:
@@ -91,24 +108,63 @@ def provision(
         for d in [cfg.mount_vhost_dir, cfg.mount_snippets_dir, cfg.mount_auth_dir]:
             d.mkdir(parents=True, exist_ok=True)
 
-        # Step 2: Connect container to network
-        console.print(f"[bold][2/6][/bold] Connecting {container} to {cfg.docker_network}")
-        network.connect_container(container)
+        # Step 2: Connect container to network (skipped in standby mode —
+        # the container lives on the primary VPS, not here)
+        if standby:
+            console.print(
+                f"[bold][2/6][/bold] [dim]Skipping network attach for {container} "
+                "(--standby — container expected on primary)[/dim]"
+            )
+        else:
+            console.print(
+                f"[bold][2/6][/bold] Connecting {container} to {cfg.docker_network}"
+            )
+            network.connect_container(container)
 
-        # Step 3: Write HTTP-only vhost for ACME
-        console.print("[bold][3/6][/bold] Generating HTTP-only vhost for ACME challenge")
-        http_config = vhost_renderer.render_http_vhost(site)
+        # Step 3: Write HTTP-only vhost for ACME (skipped in standby — DNS-01
+        # doesn't need an HTTP responder)
         vhost_path = cfg.repo_vhost_dir / f"{domain}.conf"
-        vhost_renderer.write_vhost(vhost_path, http_config)
+        if standby:
+            console.print(
+                "[bold][3/6][/bold] [dim]Skipping HTTP-only ACME vhost "
+                "(--standby — using DNS-01 challenge)[/dim]"
+            )
+        else:
+            console.print("[bold][3/6][/bold] Generating HTTP-only vhost for ACME challenge")
+            http_config = vhost_renderer.render_http_vhost(site)
+            vhost_renderer.write_vhost(vhost_path, http_config)
 
-        # Step 4: Deploy and reload
-        console.print("[bold][4/6][/bold] Deploying HTTP vhost and reloading NGINX")
-        _sync_single_vhost(cfg, domain)
-        docker.compose_up(cfg.reverse_proxy_compose)
-        nginx.reload_unsafe(cfg.reverse_proxy_compose)
+        # Step 4: Deploy and reload — also skipped in standby (no HTTP vhost
+        # to deploy yet, and the reverse-proxy stack is expected to already
+        # be up on the standby).
+        if standby:
+            console.print(
+                "[bold][4/6][/bold] [dim]Skipping HTTP vhost deploy (--standby)[/dim]"
+            )
+        else:
+            console.print("[bold][4/6][/bold] Deploying HTTP vhost and reloading NGINX")
+            _sync_single_vhost(cfg, domain)
+            docker.compose_up(cfg.reverse_proxy_compose)
+            nginx.reload_unsafe(cfg.reverse_proxy_compose)
 
         # Step 5: Issue certificate
-        if not skip_cert:
+        if skip_cert:
+            console.print("[bold][5/6][/bold] Skipping certificate issuance (--skip-cert)")
+        elif standby:
+            console.print(
+                f"[bold][5/6][/bold] Issuing Let's Encrypt certificate for "
+                f"{domain} via DNS-01 (Cloudflare)"
+            )
+            certbot.issue_cert(
+                cfg.reverse_proxy_compose,
+                domain,
+                include_www=not no_www,
+                email=cfg.certbot_email,
+                challenge="dns-cloudflare",
+                cf_credentials_path=cfg.cloudflare_credentials,
+                cf_override_compose=cfg.reverse_proxy_dns_cloudflare_compose,
+            )
+        else:
             console.print(f"[bold][5/6][/bold] Issuing Let's Encrypt certificate for {domain}")
             certbot.issue_cert(
                 cfg.reverse_proxy_compose,
@@ -116,8 +172,6 @@ def provision(
                 include_www=not no_www,
                 email=cfg.certbot_email,
             )
-        else:
-            console.print("[bold][5/6][/bold] Skipping certificate issuance (--skip-cert)")
 
         # Step 6: Write final HTTPS vhost and reload
         console.print("[bold][6/6][/bold] Generating HTTPS vhost and reloading NGINX")
@@ -126,7 +180,10 @@ def provision(
         _sync_single_vhost(cfg, domain)
         nginx.reload(cfg.reverse_proxy_compose)
 
-        console.print(f"\n[green bold]Done![/green bold] https://{domain}/ → {container}:{port}")
+        suffix = " [yellow](standby)[/yellow]" if standby else ""
+        console.print(
+            f"\n[green bold]Done![/green bold] https://{domain}/ → {container}:{port}{suffix}"
+        )
 
 
 @app.command()

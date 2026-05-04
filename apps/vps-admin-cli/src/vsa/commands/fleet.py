@@ -161,6 +161,21 @@ def backfill(
     )
 
 
+def _print_remote_result(cmd: dict, label: str = "") -> None:
+    if cmd["status"] != "completed":
+        console.print(
+            f"[red]Timed out waiting for command #{cmd['id']} on {cmd['vps_id']} "
+            f"(status={cmd['status']}){' — ' + label if label else ''}[/red]"
+        )
+        raise typer.Exit(124)
+    if cmd["stdout"]:
+        console.print(cmd["stdout"], end="")
+    if cmd["stderr"]:
+        console.print(f"[red]{cmd['stderr']}[/red]", end="")
+    if cmd["exit_code"] != 0:
+        raise typer.Exit(cmd["exit_code"] or 1)
+
+
 @app.command(
     context_settings={"allow_extra_args": True, "ignore_unknown_options": True}
 )
@@ -169,9 +184,6 @@ def exec(
     vps: str = typer.Option(..., "--vps", help="Target vps_id (e.g. vps-03)"),
     timeout: int = typer.Option(
         120, "--timeout", help="Seconds to wait for the command to complete"
-    ),
-    poll_interval: float = typer.Option(
-        2.0, "--poll-interval", help="Seconds between status polls"
     ),
 ) -> None:
     """Run a `vsa <args>` command on a remote VPS via the hub command queue.
@@ -193,40 +205,160 @@ def exec(
         )
         raise typer.Exit(2)
 
-    requested_by = getpass.getuser()
-    with audit(
-        "fleet.exec",
-        target=vps,
-        params={"argv": argv, "timeout": timeout},
-    ):
-        cmd = hub_client.enqueue_command(
+    with audit("fleet.exec", target=vps, params={"argv": argv, "timeout": timeout}):
+        cmd = hub_client.exec_and_wait(
             vps_id=vps,
             argv=argv,
-            timeout_seconds=timeout,
-            requested_by=requested_by,
+            timeout=timeout,
+            requested_by=getpass.getuser(),
+        )
+        console.print(f"[dim]ran #{cmd['id']} on {vps}: vsa {' '.join(argv)}[/dim]")
+        _print_remote_result(cmd)
+
+
+# ---------------------------------------------------------------------------
+# Convenience wrappers: thin frontends to common `fleet exec` use cases
+# ---------------------------------------------------------------------------
+
+
+@app.command("vhost-sync")
+def vhost_sync(
+    vps: str = typer.Option(..., "--vps", help="Target vps_id"),
+) -> None:
+    """Run `vsa vhost sync` on a remote VPS (copies repo confs into the bind-mount)."""
+    with audit("fleet.vhost-sync", target=vps):
+        cmd = hub_client.exec_and_wait(
+            vps_id=vps,
+            argv=["vhost", "sync"],
+            timeout=60,
+            requested_by=getpass.getuser(),
+        )
+        _print_remote_result(cmd)
+
+
+@app.command("cert-renew")
+def cert_renew(
+    vps: str = typer.Option(..., "--vps", help="Target vps_id"),
+) -> None:
+    """Run `vsa cert renew` on a remote VPS."""
+    with audit("fleet.cert-renew", target=vps):
+        cmd = hub_client.exec_and_wait(
+            vps_id=vps,
+            argv=["cert", "renew"],
+            timeout=300,
+            requested_by=getpass.getuser(),
+        )
+        _print_remote_result(cmd)
+
+
+@app.command("cert-health")
+def cert_health(
+    vps: str = typer.Option(
+        "",
+        "--vps",
+        help="Target vps_id (omit + use --all for the whole fleet)",
+    ),
+    all_vps: bool = typer.Option(
+        False, "--all", help="Run on every VPS in the registry"
+    ),
+) -> None:
+    """Run `vsa cert health` on one VPS or the whole fleet."""
+    targets: list[str]
+    if all_vps:
+        from vsa.services import hub_client as hc
+
+        # Slight reach: piggy-back the agent endpoint via the user-side client
+        with hc._client() as client:
+            resp = client.get("/vps")
+            hc._check(resp)
+            targets = [n["vps_id"] for n in resp.json()]
+    elif vps:
+        targets = [vps]
+    else:
+        console.print("[red]Specify --vps X or --all[/red]")
+        raise typer.Exit(2)
+
+    failures = 0
+    for t in targets:
+        console.print(f"\n[bold cyan]── {t} ──[/bold cyan]")
+        with audit("fleet.cert-health", target=t):
+            cmd = hub_client.exec_and_wait(
+                vps_id=t,
+                argv=["cert", "health"],
+                timeout=60,
+                requested_by=getpass.getuser(),
+            )
+        try:
+            _print_remote_result(cmd)
+        except typer.Exit as exc:
+            if exc.exit_code:
+                failures += 1
+    if failures:
+        raise typer.Exit(1)
+
+
+@app.command("site-provision")
+def site_provision(
+    domain: str = typer.Option(..., help="Domain name"),
+    primary: str = typer.Option(..., "--primary", help="Primary vps_id"),
+    standbys: str = typer.Option(
+        "",
+        "--standbys",
+        help="Comma-separated standby vps_ids (each gets vhost+DNS-01 cert, no container)",
+    ),
+    container: str = typer.Option(..., "--container", help="Container name"),
+    port: int = typer.Option(..., "--port", help="Internal container port"),
+    no_www: bool = typer.Option(False, "--no-www", help="Skip www subdomain"),
+) -> None:
+    """Provision a domain on its primary VPS + warm standbys, then record the assignment.
+
+    On the primary, runs the full `vsa site provision` (HTTP-01 webroot).
+    On each standby, runs `vsa site provision … --standby` (DNS-01 Cloudflare,
+    no container attach — the upstream lives on the primary).
+
+    Updates the domain_assignments registry on success so the dashboard
+    reflects the new layout.
+    """
+    standby_list = _split_csv(standbys)
+    base_argv = ["site", "provision", "--domain", domain, "--container", container, "--port", str(port)]
+    if no_www:
+        base_argv.append("--no-www")
+
+    with audit(
+        "fleet.site-provision",
+        target=domain,
+        params={"primary": primary, "standbys": standby_list, "container": container, "port": port},
+    ):
+        # Primary first — needs to succeed before standbys are provisioned
+        console.print(f"[bold cyan]── primary {primary} ──[/bold cyan]")
+        cmd = hub_client.exec_and_wait(
+            vps_id=primary,
+            argv=base_argv,
+            timeout=300,
+            requested_by=getpass.getuser(),
+        )
+        _print_remote_result(cmd, label="primary failed; aborting standby rollout")
+
+        for sb in standby_list:
+            console.print(f"\n[bold cyan]── standby {sb} ──[/bold cyan]")
+            cmd = hub_client.exec_and_wait(
+                vps_id=sb,
+                argv=base_argv + ["--standby"],
+                timeout=300,
+                requested_by=getpass.getuser(),
+            )
+            _print_remote_result(cmd, label=f"standby {sb} failed (other standbys + assignment will continue)")
+
+        hub_client.upsert_assignment(
+            domain,
+            primary_vps_id=primary,
+            standby_vps_ids=standby_list,
+            notes=f"provisioned via `vsa fleet site-provision` ({container}:{port})",
         )
         console.print(
-            f"[dim]queued #{cmd['id']} on {vps}: vsa {' '.join(argv)}[/dim]"
+            f"\n[green bold]Done![/green bold] {domain} provisioned on "
+            f"primary={primary} standbys={standby_list or 'none'}"
         )
-
-        deadline = time.time() + timeout + 30  # grace for transit
-        while time.time() < deadline:
-            cmd = hub_client.get_command(cmd["id"])
-            if cmd["status"] == "completed":
-                if cmd["stdout"]:
-                    console.print(cmd["stdout"], end="")
-                if cmd["stderr"]:
-                    console.print(f"[red]{cmd['stderr']}[/red]", end="")
-                if cmd["exit_code"] != 0:
-                    raise typer.Exit(cmd["exit_code"] or 1)
-                return
-            time.sleep(poll_interval)
-
-        console.print(
-            f"[red]Timed out waiting for command #{cmd['id']} on {vps} "
-            f"(status={cmd['status']})[/red]"
-        )
-        raise typer.Exit(124)
 
 
 # Surface a clean error if HUB_URL/AUTH are missing — the underlying

@@ -132,6 +132,46 @@ def get_command(command_id: int) -> dict[str, Any]:
         return resp.json()
 
 
+def wait_for_command(
+    command_id: int, *, timeout: int = 120, poll_interval: float = 2.0
+) -> dict[str, Any]:
+    """Poll a queued command until it completes (or timeout fires).
+
+    ``timeout`` is the wait budget on the caller side; the command's own
+    ``timeout_seconds`` governs the agent-side execution.
+    """
+    import time
+
+    deadline = time.time() + timeout
+    cmd = get_command(command_id)
+    while cmd["status"] != "completed" and time.time() < deadline:
+        time.sleep(poll_interval)
+        cmd = get_command(command_id)
+    return cmd
+
+
+def exec_and_wait(
+    *,
+    vps_id: str,
+    argv: list[str],
+    timeout: int = 120,
+    requested_by: str = "",
+    poll_interval: float = 2.0,
+) -> dict[str, Any]:
+    """Enqueue + wait helper used by orchestrator commands.
+
+    The caller's wait budget is the command's timeout + a 30s grace for
+    transit, so a `timeout=60` command can spend its full 60s on the agent
+    plus up to 30s in queue/network round-trips before we give up.
+    """
+    cmd = enqueue_command(
+        vps_id=vps_id, argv=argv, timeout_seconds=timeout, requested_by=requested_by
+    )
+    return wait_for_command(
+        cmd["id"], timeout=timeout + 30, poll_interval=poll_interval
+    )
+
+
 # ---------------------------------------------------------------------------
 # Agent-side helpers (used by the agent loop, not by user commands)
 #
