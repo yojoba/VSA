@@ -2,7 +2,113 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Latest Session — 2026-05-04 (Multi-VPS-aware Dashboard)
+## Latest Session — 2026-05-04 (Phase A→E: full multi-VPS write-side)
+
+> **Resume context.** A second session on 2026-05-04 took VSA from "mono-VPS
+> write tool + read-only multi-VPS dashboard" to **fully fleet-aware on both
+> read and write sides.** Phases A→E shipped end-to-end. **Read this before
+> touching:** `routers/{assignments,fleet,agent}.py`, anything under `commands/fleet.py`,
+> `services/{hub_client,certbot,agent_sync}.py`, the `compose.dns-cloudflare.yml`
+> override, or migrations 0005/0006/0007.
+
+**What landed (commits `77bdb82` → `bd7f9b4`):**
+
+- **Phase A** (`e323ba3`) — `vsa cert health` (diagnostic: broken symlinks,
+  missing LE accounts, expiring certs; exits 1 on any critical) + `vsa cert
+  issue --challenge dns-cloudflare` (DNS-01 wrapper) + `vsa cert status`
+  fixed to read host filesystem (was using `docker exec nginx openssl` which
+  silently returned empty because alpine has no openssl).
+
+- **Phase B** (`183a62e` + `a6ae9a9`) — `domain_assignments` registry: new
+  table + Pydantic model + 4 REST endpoints (GET list / GET one / PUT
+  upsert / DELETE), `vsa fleet assign|list|show|remove|backfill` CLI, new
+  `/assignments` page in the dashboard. Backfilled 21 assignments live.
+
+- **Phase C** (`20bf6d7`) — Hub→agent execution channel. New
+  `agent_commands` queue + 5 agent endpoints (`exec`, `commands` list,
+  `commands/{id}` get, `take`, `result`). Agent gained a `sync_pending_commands`
+  step in its 30s loop that pulls pending rows for its own `vps_id`, atomic
+  takes via `/take` (409 if already taken), runs `subprocess.run(["vsa",
+  *argv], …)`, captures stdout/stderr (64 KB cap), POSTs result. CLI
+  `vsa fleet exec --vps X -- …` enqueues + polls + streams output.
+
+- **Phase D** (`7c56c63`) — Orchestrator `vsa fleet site-provision --domain
+  X --primary Y --standbys Z[,W] --container c --port p`: runs full
+  `vsa site provision` on primary then `vsa site provision … --standby`
+  on each standby (skip container attach, DNS-01 cert, no HTTP-only ACME
+  vhost, otherwise identical), then writes the assignment row. Convenience
+  wrappers: `vsa fleet vhost-sync`, `cert-renew`, `cert-health [--all]`.
+
+- **Phase E** (`8ea54bb` + `bd7f9b4`) — `/api/fleet/drift` cross-checks
+  intent vs observed: `missing-on-primary` / `missing-on-standby` /
+  `rogue-host` / `cert-missing` / `cert-expiring-soon` / `cert-expired` /
+  `domain-without-assignment`. SAN-aware (migration 0007 added `certificates.sans`
+  JSON; agent populates from `openssl x509 -ext subjectAltName`) so apex+www
+  cert pairs aren't flagged as separate misses. CLI `vsa fleet drift`,
+  page UI `/health`.
+
+- **Structural batch** (`c4ac973` + `86d8da2`) — 5 footguns from previous
+  sessions: agent_audit_sync 500 (timestamp string→datetime), nginx
+  healthcheck `(unhealthy)` (added default_server with /healthz, switched to
+  127.0.0.1 to dodge IPv6/IPv4 split in alpine), promtail healthcheck
+  `(unhealthy)` (dropped — `grafana/promtail:3.0.0` is FROM scratch),
+  `PYTHONDONTWRITEBYTECODE=1` in vsa-agent.service (root agent stops
+  dropping `__pycache__/*.pyc` into user-owned uv tool dirs), `bootstrap_vps.sh`
+  now `chown`s `/var/log/vsa` + `/var/lib/vsa` to the calling user.
+
+- Multiple agent fixes (`4765064` + `c9176da`): agent reads
+  `cfg.mount_vhost_dir` (the bind-mount NGINX actually serves), not
+  `cfg.repo_vhost_dir` (the git checkout — same on every VPS, misleading
+  domain split); collect_domains skips `._*` AppleDouble files + UTF-8
+  errors; multipoint regex `_ROUTE_RE` recognizes `set $route_1 X:port;`
+  vhosts that the old `_UPSTREAM_RE` missed.
+
+**Active configuration knobs to remember:**
+
+- Hub-side: `VSA_HUB_URL=https://dashboard.flowbiz.ai/api` and
+  `VSA_HUB_AUTH=admin:<pass>` in `/etc/vsa/agent.env` on vps-01.
+- DNS-01 setup: per-VPS `cloudflare.ini` (mode 0600) at
+  `/srv/flowbiz/reverse-proxy/cloudflare/cloudflare.ini`, enabled by
+  `COMPOSE_FILE=compose.yml:compose.dns-cloudflare.yml` in
+  `stacks/reverse-proxy/.env`. Currently active on vps-03 only.
+- All three VPS run `vsa-agent.timer` (every 30s, oneshot, root) with
+  `PYTHONDONTWRITEBYTECODE=1`.
+
+**Active state of the registry (post-cleanup):**
+
+| Domain | Primary | Standbys | Notes |
+| --- | --- | --- | --- |
+| `lokalflash.ch` (+`www`) | vps-02 | vps-03 | DNS-01 on standby; cleaned up rogue vhost on vps-01 |
+| `app.lokalflash.ch` | vps-02 | vps-03 | DNS-01 on standby |
+| `dev.lokalflash.ch` (+`www`) | vps-01 | — | HTTP-01 webroot, CF proxied for apex / DNS-only for www |
+| 18 other flowbiz.ai/.com domains | vps-01 | — | auto-backfilled, all single-host |
+
+`vsa fleet drift` returns `0 critical, 0 warning, 0 info` after the cleanup.
+
+**Footguns rediscovered (don't repeat):**
+
+1. macOS `tar` includes AppleDouble files (`._*`) with non-UTF-8 bytes that
+   match `*.conf` glob → would crash `collect_domains` before the
+   `c9176da` fix. Either avoid `tar` from a Mac for nginx confs, or just
+   trust the defensive read in `collect_domains` post-fix.
+2. `Base.metadata.create_all` at API boot creates *new tables* but **does
+   not ALTER existing ones**. After adding a column (e.g. `certificates.sans`
+   in migration 0007), do **not** `alembic stamp` the new revision —
+   `alembic upgrade head` to actually run the ALTER. Hit this with 0007
+   today; the fix is `alembic stamp <prev>; alembic upgrade head`.
+3. CF Universal SSL on the free plan only covers the apex + one level of
+   subdomain. Two-level subdomains (e.g. `www.dev.lokalflash.ch`) MUST
+   be DNS-only (proxied=false), or you pay for Advanced Certificate Manager.
+4. `lokalflash-{frontend,website,pocketbase}` containers on vps-01 are
+   the **dev** environment, not prod leftovers. Don't `unprovision`
+   without `--keep-container`.
+
+**WIP not in repo yet:** none from this session — everything pushed to master.
+A previous session left `wip/deployer-on-flowbiz1` on vps-01 only.
+
+---
+
+## Previous Session — 2026-05-04 (Multi-VPS-aware Dashboard)
 
 > **Resume context.** A previous session deployed a coordinated change across the
 > CLI, API, UI, and a new stack to make the dashboard reflect the **whole
@@ -120,10 +226,28 @@ vsa stack new NAME
 vsa stack up NAME
 vsa bootstrap
 
-# VPS fleet management
+# VPS fleet management (registry)
 vsa vps list
 vsa vps add --id vps-02 --hostname myserver --ip 1.2.3.4
 vsa vps remove VPS_ID [-y]
+
+# Multi-VPS write-side ops (run on the hub; needs VSA_HUB_URL + VSA_HUB_AUTH)
+vsa fleet assign --domain X --primary vps-Y --standbys vps-Z[,vps-W]
+vsa fleet list / show DOMAIN / remove DOMAIN
+vsa fleet backfill [--dry-run]
+vsa fleet exec --vps vps-X --timeout 120 -- <argv>
+vsa fleet vhost-sync --vps vps-X
+vsa fleet cert-renew --vps vps-X
+vsa fleet cert-health [--vps vps-X | --all]
+vsa fleet site-provision --domain X --primary vps-Y --standbys vps-Z \
+                         --container c --port p [--no-www]
+vsa fleet drift [--show-info]
+
+# Cert health + DNS-01 issuance
+vsa cert health
+vsa cert issue --domain X --challenge dns-cloudflare
+vsa cert issue --domain X --no-www  # technical subdomains
+vsa site provision --domain X --container c --port p --standby  # warm-standby
 
 # Make targets delegate to CLI
 make provision-container domain=<domain> port=<port> [nowww=true]
@@ -162,7 +286,13 @@ See `docs/architecture.md` for full architecture documentation with diagrams.
 
 ### Dashboard API
 
-9 routers: `agent`, `audit_logs`, `certs`, `containers`, `domains`, `stacks`, `traffic`, `vps`
+11 routers: `agent`, `assignments`, `audit_logs`, `certs`, `containers`, `domains`, `fleet`, `stacks`, `traffic`, `vps`
+
+The `assignments` router exposes the user-edited intent registry (primary +
+standbys per domain). The `fleet` router exposes the read-only
+`/api/fleet/drift` cross-check between intent and observed state. The
+`agent` router gained an exec-channel block (POST `/agent/exec`, GET/POST
+`/agent/commands[/{id}/{take,result}]`) for hub→agent command execution.
 
 Key services:
 - **Loki client** (`services/loki.py`) — queries Loki for raw traffic logs and aggregated stats via LogQL metric queries (`count_over_time`, `sum_over_time`, `avg_over_time` with `unwrap`)
@@ -171,7 +301,7 @@ Key services:
 
 ### Dashboard UI
 
-7 pages: Overview (`/`), Containers, Domains, Certificates, Audit, Traffic, VPS
+9 pages: Overview (`/`), **Fleet Health** (`/health`), Containers, Domains, Certificates, **Assignments** (`/assignments`), Traffic, Audit, VPS
 
 ### Traffic Analytics Pipeline
 

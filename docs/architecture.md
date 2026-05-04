@@ -252,6 +252,94 @@ API endpoint (domains-sync / certs-sync)
 | `containers-sync` | Full replacement (delete all + re-insert) | Always fresh |
 | `DELETE /agent/vps/{id}` | Cascade delete | Removes VPS + domains + snapshots + traffic |
 
+## Write-Side Multi-VPS (Phase A→E, 2026-05-04)
+
+The agent-sync table above is the **read** path. The **write** path was
+added in a second pass: a hub-stored command queue + an intent registry,
+both polled by the existing agents on their 30s tick.
+
+```
+┌─ on the hub ────────────────────────┐         ┌─ on each VPS ──────────────┐
+│                                     │         │                            │
+│  vsa fleet exec --vps X -- ...      │         │  vsa-agent.timer (30s)     │
+│         │                           │         │         │                  │
+│         ▼ POST /api/agent/exec      │         │         ▼                  │
+│  ┌──────────────────────────────┐   │         │  ┌──────────────────────┐  │
+│  │ agent_commands (queue)       │   │ ◀───────│  │ GET /agent/commands  │  │
+│  │  pending → running →         │   │         │  │ ?vps_id=X            │  │
+│  │  completed                   │   │ ───────▶│  │ POST .../take        │  │
+│  │                              │   │         │  │ subprocess.run([     │  │
+│  │ domain_assignments (intent)  │   │         │  │   "vsa", *argv])     │  │
+│  └──────────────────────────────┘   │         │  │ POST .../result      │  │
+│         ▲                           │         │  └──────────────────────┘  │
+│         │ GET /api/fleet/drift      │         │                            │
+│  /health page (every 60s)           │         │                            │
+└─────────────────────────────────────┘         └────────────────────────────┘
+```
+
+### Intent vs observed state
+
+| Table | Source of truth | Purpose |
+| --- | --- | --- |
+| `domains` (sync) | what each agent sees in `cfg.mount_vhost_dir` | observed reality |
+| `certificates` (sync) | what each agent sees in `cfg.letsencrypt_live_dir` (with SAN extraction) | observed reality |
+| `domain_assignments` | user, edited via `vsa fleet assign` / PUT `/api/assignments/{domain}` | declared intent |
+| `agent_commands` | user, written by `vsa fleet exec` / orchestrators / `POST /api/agent/exec` | command queue |
+
+`/api/fleet/drift` joins these in Python and reports any mismatch
+(`missing-on-primary`, `rogue-host`, `cert-missing`, `cert-expiring-soon`,
+`cert-expired`, etc.). SAN-aware: a cert covering `apex + www.apex` is
+treated as serving both names on the same VPS.
+
+### Hub→agent execution flow
+
+1. Hub-side caller (CLI or orchestrator) POSTs `/api/agent/exec` with
+   `{vps_id, argv, timeout_seconds}`. Returns a row id.
+2. Caller polls `GET /api/agent/commands/{id}` every 2s.
+3. Target agent on its next 30s sync tick calls
+   `GET /agent/commands?vps_id=X&status=pending&limit=10`.
+4. For each pending row, agent calls `POST /agent/commands/{id}/take`
+   (returns 409 if someone else got it) → status flips to `running`.
+5. Agent runs `subprocess.run(["vsa", *argv], timeout=timeout_seconds,
+   capture_output=True, text=True)`.
+6. Agent posts `POST /agent/commands/{id}/result` with
+   `{exit_code, stdout, stderr}` (each capped at 64 KB) → status flips to
+   `completed`.
+7. Caller's next poll sees `completed`, prints output, exits with
+   `exit_code`.
+
+Latency is bounded by one agent tick (~30s). Agents never accept inbound
+connections from the hub — they always initiate.
+
+See [ADR-006](ADRs/006-hub-to-agent-execution.md) for the design rationale
+(pull vs push, security envelope, alternatives considered).
+
+### Warm-standby flow (`vsa fleet site-provision`)
+
+```
+hub (CLI)                          primary VPS                      standby VPS
+   │
+   │ enqueue "site provision -d X -c c -p p"
+   ├──────────────────────────────────▶ vhost (HTTP-only ACME) ─▶ HTTP-01 webroot
+   │                                    cert via Let's Encrypt
+   │                                    HTTPS vhost + reload
+   │ ◀──────────────────────────────── result OK
+   │
+   │ enqueue "site provision -d X -c c -p p --standby"
+   ├──────────────────────────────────────────────────────────────▶ vhost (skip ACME stub)
+   │                                                                cert via DNS-01 Cloudflare
+   │                                                                HTTPS vhost + reload
+   │                                                                (no container attach,
+   │                                                                 no backend running)
+   │ ◀────────────────────────────────────────────────────────────  result OK
+   │
+   ▼ PUT /api/assignments/X { primary, standbys, notes }
+```
+
+The standby ends up with a valid cert + working vhost ready to serve
+traffic the moment a failover updates DNS — the missing piece is just
+the application container itself, which is deployed separately.
+
 ## Networking
 
 ```

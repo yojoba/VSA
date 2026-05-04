@@ -158,16 +158,66 @@ Picks up renewed TLS certificates by reloading NGINX config. Uses Docker socket 
 
 **Data:** Bind-mounted at `/srv/flowbiz/dashboard/data/postgres/`
 
-**Tables (6, managed by Alembic):**
+**Tables (8, managed by Alembic):**
 
 | Table | Purpose | Growth |
 |-------|---------|--------|
 | `vps_nodes` | Registered VPS instances | Static (one row per VPS) |
-| `domains` | Provisioned domains | Slow (one row per domain) |
-| `certificates` | Cert status from remote agents | Slow |
+| `domains` | Observed vhosts per VPS (agent-synced) | Slow |
+| `certificates` | Observed certs per VPS, with `sans` JSON column for SAN-aware drift | Slow |
 | `audit_logs` | Audit trail from remote agents | Moderate |
 | `container_snapshots` | Periodic container state from agents | Replaced on each sync |
 | `traffic_stats` | Aggregated traffic from agents | Moderate |
+| `domain_assignments` | **Intent**: primary + warm-standby VPS list per domain (migration 0005) | Static (one row per domain) |
+| `agent_commands` | Hub→agent command queue: `pending → running → completed`, JSON `argv`, captured `stdout`/`stderr` (migration 0006) | Bounded (TTL/reaper recommended in v2) |
+
+**Migrations active on prod (vps-01):** `0001` initial → `0007` `certificates.sans`.
+A subtle gotcha: `Base.metadata.create_all` at API boot creates *new tables*
+but does **not ALTER existing ones**. After adding a column to an existing
+table (e.g. `certificates.sans` in `0007`), do not just `alembic stamp` —
+run `alembic upgrade head` to actually execute the `ALTER`.
+
+### Schema details for the Phase A→E additions
+
+**`domain_assignments`**
+
+```
+id PK
+domain VARCHAR(255) UNIQUE NOT NULL  -- one row per domain (apex or sub)
+primary_vps_id VARCHAR(64) NOT NULL  -- vps_id of the active host
+standby_vps_ids JSON NOT NULL DEFAULT '[]'  -- list of warm-standby vps_ids
+notes TEXT NOT NULL DEFAULT ''
+created_at / updated_at TIMESTAMPTZ
+```
+
+Validation in the PUT endpoint: `primary_vps_id` may not also appear in
+`standby_vps_ids`; `standby_vps_ids` is deduplicated and sorted before
+storage.
+
+**`agent_commands`**
+
+```
+id PK
+vps_id VARCHAR(64) NOT NULL  -- target host (indexed)
+argv JSON NOT NULL           -- e.g. ["cert", "health"]; agent prepends "vsa"
+status VARCHAR(32) NOT NULL DEFAULT 'pending'  -- pending|running|completed
+timeout_seconds INT NOT NULL DEFAULT 120
+requested_by VARCHAR(128)    -- usually the unix user that ran `vsa fleet exec`
+created_at / taken_at / completed_at TIMESTAMPTZ
+exit_code INT NULL
+stdout / stderr TEXT NULL    -- 64 KB cap, agent truncates with "...[truncated]"
+```
+
+Lifecycle: `POST /agent/exec` inserts with `status=pending`. Target VPS's
+agent calls `POST /agent/commands/{id}/take` (atomic-ish — returns 409 if
+already `running`/`completed`), runs the subprocess, then
+`POST /agent/commands/{id}/result` to flip to `completed`. A reaper to
+mark long-`running` rows as `timeout` is left for a future v2.
+
+**`certificates.sans`** — JSON list, populated by agent from
+`openssl x509 -ext subjectAltName -in <cert>`, with the cert's primary CN
+prepended at index 0. Used by `/api/fleet/drift` to recognize that an apex
+cert with `www.apex` in its SAN serves both names from one row.
 
 ### Dashboard API (FastAPI)
 

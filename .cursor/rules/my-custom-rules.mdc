@@ -34,9 +34,22 @@ See `docs/architecture.md` for full architecture documentation with diagrams.
 | `vps` | PostgreSQL |
 | `agent` | Agent sync ingest (POST) + VPS deletion (DELETE) |
 
-### Dashboard UI — 7 Pages
+### Dashboard UI — 9 Pages
 
-Overview (`/`), Containers, Domains, Certificates, Traffic, Audit, VPS
+Overview (`/`), **Fleet Health** (`/health`), Containers, Domains, Certificates, **Assignments** (`/assignments`), Traffic, Audit, VPS
+
+### Multi-VPS Write-side (Phase A→E, 2026-05-04)
+
+VSA is now fully fleet-aware on both read and write sides:
+
+- **`domain_assignments`** table records intent (primary VPS + warm-standby VPS list per domain). Edited via `vsa fleet assign` or PUT `/api/assignments/{domain}`.
+- **`agent_commands`** queue: hub enqueues via POST `/api/agent/exec`; agent on each VPS polls for its own pending rows on every 30s sync tick, runs `subprocess.run(["vsa", *argv])`, posts result back. CLI: `vsa fleet exec --vps X -- <argv>`.
+- **`certificates.sans`** column (migration 0007): agent populates via `openssl x509 -ext subjectAltName` so drift detection treats apex+www cert SANs as covering both names.
+- **Drift detection** (`/api/fleet/drift`): cross-checks intent vs observed (missing-on-primary, missing-on-standby, rogue-host, cert-missing, cert-expiring-soon, cert-expired, domain-without-assignment). SAN-aware. CLI `vsa fleet drift`, page `/health`.
+- **Orchestrator** `vsa fleet site-provision --domain X --primary Y --standbys Z[,W] --container c --port p` runs HTTP-01 on primary then `--standby` (DNS-01) on each standby, then writes the assignment row.
+- **`vsa site provision --standby`** flag: skip container network attach + use `--challenge dns-cloudflare` + skip HTTP-only intermediate vhost.
+
+Hub-side ops require `VSA_HUB_URL` + `VSA_HUB_AUTH=admin:<pass>` in `/etc/vsa/agent.env`. DNS-01 issuance requires the per-VPS `compose.dns-cloudflare.yml` override active + `cloudflare.ini` (mode 0600) at `/srv/flowbiz/reverse-proxy/cloudflare/`.
 
 ### Traffic Analytics Pipeline
 
@@ -90,15 +103,28 @@ vsa site provision --domain promoflash.flowbiz.ai \
   --route /=promoflash-frontend:80 \
   --route /api/=promoflash-pocketbase:8090 \
   --route /_/=promoflash-pocketbase:8090
-vsa cert renew / status / install-cron
+vsa cert renew / status / health / install-cron
+vsa cert issue --domain X --challenge {http-webroot,dns-cloudflare}
+vsa site provision --domain X --container c --port p --standby   # warm-standby host
 vsa auth add --domain X --user Y
 vsa vhost sync
 vsa agent start
 
-# VPS fleet management
+# VPS fleet management (registry of nodes)
 vsa vps list
 vsa vps add --id vps-02 --hostname myserver --ip 1.2.3.4
 vsa vps remove VPS_ID [-y]
+
+# Multi-VPS write-side (run on hub; needs VSA_HUB_URL + VSA_HUB_AUTH)
+vsa fleet assign --domain X --primary vps-Y --standbys vps-Z[,vps-W]
+vsa fleet list / show DOMAIN / remove DOMAIN
+vsa fleet backfill [--dry-run]
+vsa fleet exec --vps vps-X --timeout 120 -- <argv>
+vsa fleet vhost-sync / cert-renew --vps vps-X
+vsa fleet cert-health [--vps vps-X | --all]
+vsa fleet site-provision --domain X --primary vps-Y --standbys vps-Z \
+                         --container c --port p [--no-www]
+vsa fleet drift [--show-info]
 ```
 
 ## Certificate Auto-Renewal
