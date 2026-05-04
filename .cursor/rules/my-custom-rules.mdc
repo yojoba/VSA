@@ -51,6 +51,13 @@ VSA is now fully fleet-aware on both read and write sides:
 
 Hub-side ops require `VSA_HUB_URL` + `VSA_HUB_AUTH=admin:<pass>` in `/etc/vsa/agent.env`. DNS-01 issuance requires the per-VPS `compose.dns-cloudflare.yml` override active + `cloudflare.ini` (mode 0600) at `/srv/flowbiz/reverse-proxy/cloudflare/`.
 
+**Fleet health timers (active on hub):**
+- `vsa-drift.timer` — daily 08:00, runs `vsa fleet drift`
+- `vsa-fleet-cert-health.timer` — weekly Mon 09:00, runs `vsa fleet cert-health --all`
+- Both: `EnvironmentFile=/etc/vsa/agent.env`, output → journalctl → Promtail → central Loki. See `docs/runbooks/fleet_health_timers.md`.
+
+**`vsa fleet --help` trap:** never reintroduce `@app.callback()` on the fleet group that raises on missing env — Typer fires it before resolving `--help`. The check belongs in each command body or `hub_client._client()` (where it already lives).
+
 ### Traffic Analytics Pipeline
 
 ```

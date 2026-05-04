@@ -11,7 +11,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 > `services/{hub_client,certbot,agent_sync}.py`, the `compose.dns-cloudflare.yml`
 > override, or migrations 0005/0006/0007.
 
-**What landed (commits `77bdb82` → `bd7f9b4`):**
+**What landed (commits `77bdb82` → `16a7ffb`, 17 commits):**
 
 - **Phase A** (`e323ba3`) — `vsa cert health` (diagnostic: broken symlinks,
   missing LE accounts, expiring certs; exits 1 on any critical) + `vsa cert
@@ -63,6 +63,26 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   errors; multipoint regex `_ROUTE_RE` recognizes `set $route_1 X:port;`
   vhosts that the old `_UPSTREAM_RE` missed.
 
+- **Doc alignment** (`db80452` + `f105cf3`) — CLAUDE.md / README /
+  architecture / LLD / cursor rules / ADR-006 brought up to date with
+  Phase A→E. Every CLI command's docstring gained an `Examples:` block
+  so `vsa <cmd> --help` is now self-documenting; `vsa fleet drift --help`
+  and `vsa cert health --help` also list the finding kinds inline.
+
+- **`--help` callback bug** (`1818ffa`) — a `@app.callback()` on the
+  `fleet` group was firing before Typer resolved `--help`, so reading
+  the help required exporting `VSA_HUB_URL` first. Removed; the same
+  validation already happens in `hub_client._client()` at the point of
+  the first API call. Caught by another Claude session reviewing the
+  CLI.
+
+- **Fleet health timers** (`16a7ffb`) — two new systemd units in
+  `infra/systemd/`: `vsa-drift.timer` (daily 08:00 → `vsa fleet drift`)
+  and `vsa-fleet-cert-health.timer` (weekly Mon 09:00 →
+  `vsa fleet cert-health --all`). Both `EnvironmentFile=/etc/vsa/agent.env`,
+  output to journalctl, scraped by Promtail → Loki. Installed and active
+  on the hub. Runbook at `docs/runbooks/fleet_health_timers.md`.
+
 **Active configuration knobs to remember:**
 
 - Hub-side: `VSA_HUB_URL=https://dashboard.flowbiz.ai/api` and
@@ -73,6 +93,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   `stacks/reverse-proxy/.env`. Currently active on vps-03 only.
 - All three VPS run `vsa-agent.timer` (every 30s, oneshot, root) with
   `PYTHONDONTWRITEBYTECODE=1`.
+- The hub also runs `vsa-drift.timer` (daily 08:00) and
+  `vsa-fleet-cert-health.timer` (weekly Mon 09:00). Output → journalctl
+  → Promtail → central Loki. Active alerts not wired yet — failure shows
+  in `systemctl status` only. To activate: see `docs/runbooks/fleet_health_timers.md`.
 
 **Active state of the registry (post-cleanup):**
 
