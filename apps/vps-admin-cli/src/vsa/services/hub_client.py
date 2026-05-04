@@ -95,3 +95,92 @@ def list_domains() -> list[dict[str, Any]]:
         resp = client.get("/domains")
         _check(resp)
         return resp.json()
+
+
+# ---------------------------------------------------------------------------
+# Hub→agent execution channel (Phase C)
+# ---------------------------------------------------------------------------
+
+
+def enqueue_command(
+    *,
+    vps_id: str,
+    argv: list[str],
+    timeout_seconds: int = 120,
+    requested_by: str = "",
+) -> dict[str, Any]:
+    """POST /agent/exec — enqueue a command for a target VPS."""
+    with _client() as client:
+        resp = client.post(
+            "/agent/exec",
+            json={
+                "vps_id": vps_id,
+                "argv": argv,
+                "timeout_seconds": timeout_seconds,
+                "requested_by": requested_by,
+            },
+        )
+        _check(resp)
+        return resp.json()
+
+
+def get_command(command_id: int) -> dict[str, Any]:
+    """GET /agent/commands/{id} — fetch a command by id."""
+    with _client() as client:
+        resp = client.get(f"/agent/commands/{command_id}")
+        _check(resp)
+        return resp.json()
+
+
+# ---------------------------------------------------------------------------
+# Agent-side helpers (used by the agent loop, not by user commands)
+#
+# These need a different auth setup — the agent uses VSA_AGENT_TOKEN, not
+# the basic-auth user/pass. We accept the token explicitly since `_client()`
+# above is geared for the user-facing flows.
+# ---------------------------------------------------------------------------
+
+
+def _agent_client(hub_url: str, agent_token: str) -> httpx.Client:
+    return httpx.Client(
+        base_url=hub_url,
+        headers={"Authorization": f"Bearer {agent_token}"},
+        timeout=30.0,
+    )
+
+
+def list_pending_for_vps(
+    *, hub_url: str, agent_token: str, vps_id: str, limit: int = 20
+) -> list[dict[str, Any]]:
+    with _agent_client(hub_url, agent_token) as client:
+        resp = client.get(
+            "/agent/commands",
+            params={"vps_id": vps_id, "status": "pending", "limit": limit},
+        )
+        _check(resp)
+        return resp.json()
+
+
+def take_command(*, hub_url: str, agent_token: str, command_id: int) -> dict[str, Any]:
+    with _agent_client(hub_url, agent_token) as client:
+        resp = client.post(f"/agent/commands/{command_id}/take")
+        _check(resp)
+        return resp.json()
+
+
+def post_command_result(
+    *,
+    hub_url: str,
+    agent_token: str,
+    command_id: int,
+    exit_code: int,
+    stdout: str,
+    stderr: str,
+) -> dict[str, Any]:
+    with _agent_client(hub_url, agent_token) as client:
+        resp = client.post(
+            f"/agent/commands/{command_id}/result",
+            json={"exit_code": exit_code, "stdout": stdout, "stderr": stderr},
+        )
+        _check(resp)
+        return resp.json()

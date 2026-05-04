@@ -435,6 +435,78 @@ def collect_traffic_stats(
     return stats, new_offsets
 
 
+def execute_pending_commands(client: httpx.Client, hub_url: str) -> int:
+    """Pull and execute any pending hub→agent commands for this VPS.
+
+    Each command's argv is prepended with ``vsa`` and run via subprocess.
+    Stdout/stderr are captured with a timeout and posted back to the hub.
+
+    Returns the number of commands executed in this tick.
+    """
+    cfg = get_config()
+    resp = client.get(
+        f"{hub_url}/agent/commands",
+        params={"vps_id": cfg.vps_id, "status": "pending", "limit": 10},
+    )
+    resp.raise_for_status()
+    pending = resp.json()
+    if not pending:
+        return 0
+
+    executed = 0
+    for cmd in pending:
+        cmd_id = cmd["id"]
+        # Atomic-ish take: hub returns 409 if someone already grabbed it
+        take = client.post(f"{hub_url}/agent/commands/{cmd_id}/take")
+        if take.status_code == 409:
+            continue
+        take.raise_for_status()
+
+        argv = ["vsa", *cmd["argv"]]
+        timeout = max(10, int(cmd.get("timeout_seconds", 120)))
+        try:
+            proc = subprocess.run(
+                argv, capture_output=True, text=True, timeout=timeout, check=False
+            )
+            exit_code = proc.returncode
+            stdout = proc.stdout
+            stderr = proc.stderr
+        except subprocess.TimeoutExpired as exc:
+            exit_code = 124
+            stdout = exc.stdout.decode() if isinstance(exc.stdout, bytes) else (exc.stdout or "")
+            stderr = (
+                (exc.stderr.decode() if isinstance(exc.stderr, bytes) else (exc.stderr or ""))
+                + f"\n[agent] timed out after {timeout}s"
+            )
+        except Exception as exc:  # pragma: no cover — defensive
+            exit_code = 127
+            stdout = ""
+            stderr = f"[agent] failed to execute argv={argv}: {exc}"
+
+        # Truncate huge outputs so we don't blow up the DB / dashboard
+        max_len = 64 * 1024
+        if len(stdout) > max_len:
+            stdout = stdout[:max_len] + "\n…[truncated]"
+        if len(stderr) > max_len:
+            stderr = stderr[:max_len] + "\n…[truncated]"
+
+        result = client.post(
+            f"{hub_url}/agent/commands/{cmd_id}/result",
+            json={"exit_code": exit_code, "stdout": stdout, "stderr": stderr},
+        )
+        result.raise_for_status()
+        executed += 1
+
+    return executed
+
+
+def sync_pending_commands(client: httpx.Client, hub_url: str) -> None:
+    """Wrapper to fit the orchestrator step signature."""
+    n = execute_pending_commands(client, hub_url)
+    if n:
+        console.print(f"    [dim]ran {n} fleet command(s)[/dim]")
+
+
 def sync_traffic_stats(client: httpx.Client, hub_url: str) -> None:
     cfg = get_config()
     state = _load_sync_state()
@@ -468,6 +540,7 @@ _STEPS: list[tuple[str, Any]] = [
     ("Domains", sync_domains),
     ("Audit events", sync_audit_events),
     ("Traffic stats", sync_traffic_stats),
+    ("Fleet commands", sync_pending_commands),
 ]
 
 

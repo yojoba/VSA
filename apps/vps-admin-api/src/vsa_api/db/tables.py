@@ -137,6 +137,41 @@ class DomainAssignment(Base):
     )
 
 
+class AgentCommand(Base):
+    """Hub→agent execution queue — `vsa fleet exec` enqueues here.
+
+    Status lifecycle: ``pending`` → ``running`` (agent took it) →
+    ``completed`` (any exit code) or ``timeout`` (agent never came back).
+    """
+
+    __tablename__ = "agent_commands"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    vps_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    argv: Mapped[list[str]] = mapped_column(JSON, nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="pending", server_default="pending", index=True
+    )
+    timeout_seconds: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=120, server_default="120"
+    )
+    requested_by: Mapped[str] = mapped_column(
+        String(128), nullable=False, default="", server_default=""
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
+    taken_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    exit_code: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    stdout: Mapped[str | None] = mapped_column(Text, nullable=True)
+    stderr: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
 class TrafficStat(Base):
     __tablename__ = "traffic_stats"
 

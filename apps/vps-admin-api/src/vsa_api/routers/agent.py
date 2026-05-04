@@ -12,7 +12,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from vsa_api.config import settings
 from vsa_api.db.session import get_db
-from vsa_api.db.tables import AuditLog, Certificate, ContainerSnapshot, Domain, TrafficStat, VpsNode
+from vsa_api.db.tables import (
+    AgentCommand,
+    AuditLog,
+    Certificate,
+    ContainerSnapshot,
+    Domain,
+    TrafficStat,
+    VpsNode,
+)
 
 router = APIRouter(tags=["agent"])
 
@@ -346,3 +354,162 @@ async def agent_traffic_sync(
 
     await db.commit()
     return {"synced": count}
+
+
+# ---------------------------------------------------------------------------
+# Hub→Agent execution channel (Phase C)
+# ---------------------------------------------------------------------------
+
+
+class ExecPayload(BaseModel):
+    """Body of POST /agent/exec — enqueue a command for a remote VPS."""
+
+    vps_id: str
+    argv: list[str]  # e.g. ["cert", "health"] — `vsa` is prepended on the agent
+    timeout_seconds: int = 120
+    requested_by: str = ""
+
+
+class CommandResultPayload(BaseModel):
+    """Body of POST /agent/commands/{id}/result — agent reports back."""
+
+    exit_code: int
+    stdout: str = ""
+    stderr: str = ""
+
+
+def _serialize_command(c: AgentCommand) -> dict[str, Any]:
+    return {
+        "id": c.id,
+        "vps_id": c.vps_id,
+        "argv": c.argv,
+        "status": c.status,
+        "timeout_seconds": c.timeout_seconds,
+        "requested_by": c.requested_by,
+        "created_at": c.created_at.isoformat() if c.created_at else None,
+        "taken_at": c.taken_at.isoformat() if c.taken_at else None,
+        "completed_at": c.completed_at.isoformat() if c.completed_at else None,
+        "exit_code": c.exit_code,
+        "stdout": c.stdout,
+        "stderr": c.stderr,
+    }
+
+
+@router.post("/agent/exec")
+async def agent_exec_enqueue(
+    payload: ExecPayload,
+    db: AsyncSession = Depends(get_db),
+):
+    """Enqueue a command for a target VPS.
+
+    Auth comes from the surrounding nginx basic-auth — this endpoint is
+    user-facing (called by `vsa fleet exec` running on the hub). Returns
+    the queued row so the caller can poll for the result.
+    """
+    if not payload.argv:
+        raise HTTPException(status_code=400, detail="argv must be non-empty")
+
+    cmd = AgentCommand(
+        vps_id=payload.vps_id,
+        argv=payload.argv,
+        timeout_seconds=payload.timeout_seconds,
+        requested_by=payload.requested_by,
+        status="pending",
+    )
+    db.add(cmd)
+    await db.commit()
+    await db.refresh(cmd)
+    return _serialize_command(cmd)
+
+
+@router.get("/agent/commands")
+async def agent_list_commands(
+    vps_id: str,
+    status: str | None = None,
+    limit: int = 20,
+    db: AsyncSession = Depends(get_db),
+    _: None = Depends(_verify_token),
+):
+    """List commands for a VPS — used by the agent to poll for pending work.
+
+    Token-authenticated (the agent passes its VSA_AGENT_TOKEN). The agent
+    typically calls this with ``status=pending`` and a small ``limit``.
+    """
+    q = select(AgentCommand).where(AgentCommand.vps_id == vps_id)
+    if status:
+        q = q.where(AgentCommand.status == status)
+    q = q.order_by(AgentCommand.created_at).limit(limit)
+    result = await db.execute(q)
+    return [_serialize_command(c) for c in result.scalars().all()]
+
+
+@router.get("/agent/commands/{command_id}")
+async def agent_get_command(
+    command_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Fetch a single command by id — used by `vsa fleet exec` to poll.
+
+    Unauthenticated (behind nginx basic-auth) so the hub-side CLI can poll
+    without juggling agent tokens.
+    """
+    result = await db.execute(
+        select(AgentCommand).where(AgentCommand.id == command_id)
+    )
+    cmd = result.scalar_one_or_none()
+    if cmd is None:
+        raise HTTPException(status_code=404, detail=f"Command {command_id} not found")
+    return _serialize_command(cmd)
+
+
+@router.post("/agent/commands/{command_id}/take")
+async def agent_take_command(
+    command_id: int,
+    db: AsyncSession = Depends(get_db),
+    _: None = Depends(_verify_token),
+):
+    """Mark a pending command as ``running`` and stamp ``taken_at``.
+
+    Idempotent-ish: refuses to re-take a command that's already running or
+    completed. Token-authenticated.
+    """
+    result = await db.execute(
+        select(AgentCommand).where(AgentCommand.id == command_id)
+    )
+    cmd = result.scalar_one_or_none()
+    if cmd is None:
+        raise HTTPException(status_code=404, detail=f"Command {command_id} not found")
+    if cmd.status != "pending":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Command {command_id} is already {cmd.status}",
+        )
+    cmd.status = "running"
+    cmd.taken_at = datetime.now(timezone.utc)
+    await db.commit()
+    await db.refresh(cmd)
+    return _serialize_command(cmd)
+
+
+@router.post("/agent/commands/{command_id}/result")
+async def agent_command_result(
+    command_id: int,
+    payload: CommandResultPayload,
+    db: AsyncSession = Depends(get_db),
+    _: None = Depends(_verify_token),
+):
+    """Receive the execution result from the agent."""
+    result = await db.execute(
+        select(AgentCommand).where(AgentCommand.id == command_id)
+    )
+    cmd = result.scalar_one_or_none()
+    if cmd is None:
+        raise HTTPException(status_code=404, detail=f"Command {command_id} not found")
+    cmd.status = "completed"
+    cmd.completed_at = datetime.now(timezone.utc)
+    cmd.exit_code = payload.exit_code
+    cmd.stdout = payload.stdout
+    cmd.stderr = payload.stderr
+    await db.commit()
+    await db.refresh(cmd)
+    return _serialize_command(cmd)

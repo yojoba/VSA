@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import getpass
+import time
 from collections import defaultdict
 
 import typer
@@ -157,6 +159,74 @@ def backfill(
         f"\n[bold]Summary:[/bold] {created} created, "
         f"{skipped_existing} already existed, {skipped_multi} multi-host (manual)"
     )
+
+
+@app.command(
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True}
+)
+def exec(
+    ctx: typer.Context,
+    vps: str = typer.Option(..., "--vps", help="Target vps_id (e.g. vps-03)"),
+    timeout: int = typer.Option(
+        120, "--timeout", help="Seconds to wait for the command to complete"
+    ),
+    poll_interval: float = typer.Option(
+        2.0, "--poll-interval", help="Seconds between status polls"
+    ),
+) -> None:
+    """Run a `vsa <args>` command on a remote VPS via the hub command queue.
+
+    Usage:
+
+        vsa fleet exec --vps vps-03 -- cert health
+        vsa fleet exec --vps vps-02 -- vhost sync
+
+    The args after ``--`` are the argv passed to the remote `vsa`. Output
+    streams back once the agent has executed it (next agent tick = up to
+    ~30s of latency).
+    """
+    argv = list(ctx.args)
+    if not argv:
+        console.print(
+            "[red]Need a command after `--`, e.g. "
+            "`vsa fleet exec --vps vps-03 -- cert health`[/red]"
+        )
+        raise typer.Exit(2)
+
+    requested_by = getpass.getuser()
+    with audit(
+        "fleet.exec",
+        target=vps,
+        params={"argv": argv, "timeout": timeout},
+    ):
+        cmd = hub_client.enqueue_command(
+            vps_id=vps,
+            argv=argv,
+            timeout_seconds=timeout,
+            requested_by=requested_by,
+        )
+        console.print(
+            f"[dim]queued #{cmd['id']} on {vps}: vsa {' '.join(argv)}[/dim]"
+        )
+
+        deadline = time.time() + timeout + 30  # grace for transit
+        while time.time() < deadline:
+            cmd = hub_client.get_command(cmd["id"])
+            if cmd["status"] == "completed":
+                if cmd["stdout"]:
+                    console.print(cmd["stdout"], end="")
+                if cmd["stderr"]:
+                    console.print(f"[red]{cmd['stderr']}[/red]", end="")
+                if cmd["exit_code"] != 0:
+                    raise typer.Exit(cmd["exit_code"] or 1)
+                return
+            time.sleep(poll_interval)
+
+        console.print(
+            f"[red]Timed out waiting for command #{cmd['id']} on {vps} "
+            f"(status={cmd['status']})[/red]"
+        )
+        raise typer.Exit(124)
 
 
 # Surface a clean error if HUB_URL/AUTH are missing — the underlying
