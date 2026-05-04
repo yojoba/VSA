@@ -29,7 +29,17 @@ def register(
     hub_url: str = typer.Option(..., "--hub-url", help="Dashboard API URL"),
     token: str = typer.Option(..., "--token", help="Pre-shared API token"),
 ) -> None:
-    """Register this VPS as an agent with the central dashboard."""
+    """Register this VPS as an agent with the central dashboard.
+
+    Example:
+
+        vsa agent register --hub-url https://dashboard.flowbiz.ai/api \\
+                           --token <pre-shared-secret>
+
+    Writes /etc/vsa/agent.env with VSA_HUB_URL + VSA_AGENT_TOKEN. Required
+    once per VPS. After this, enable the systemd timer so the agent runs
+    every 30s: `sudo systemctl enable --now vsa-agent.timer`.
+    """
     AGENT_ENV_PATH.parent.mkdir(parents=True, exist_ok=True)
     AGENT_ENV_PATH.write_text(
         f"VSA_HUB_URL={hub_url}\n"
@@ -41,7 +51,28 @@ def register(
 
 @app.command()
 def start() -> None:
-    """Run one sync cycle (heartbeat, containers, certs, domains, audit)."""
+    """Run one sync cycle (heartbeat, containers, certs, domains, audit, fleet commands).
+
+    Example:
+
+        sudo vsa agent start
+
+    This is the entry point invoked by `vsa-agent.service` every 30s via
+    systemd timer. Manual invocation is for debugging — production should
+    rely on the timer.
+
+    Steps performed in order:
+      1. Heartbeat        (POST /agent/heartbeat — registers/updates VPS row)
+      2. Containers       (POST /agent/containers-sync — full replacement)
+      3. Certificates     (POST /agent/certs-sync — upsert + stale removal,
+                           SANs included since migration 0007)
+      4. Domains          (POST /agent/domains-sync — upsert + stale removal,
+                           reads bind-mount NOT repo)
+      5. Audit events     (POST /agent/audit-sync — incremental from local SQLite)
+      6. Traffic stats    (POST /agent/traffic-sync — incremental from logs)
+      7. Fleet commands   (GET /agent/commands?vps_id=X — pull pending,
+                           subprocess.run, post result)
+    """
     env = _load_agent_env()
     if not env:
         console.print("[red]Agent not registered. Run 'vsa agent register' first.[/red]")
@@ -62,7 +93,15 @@ def start() -> None:
 
 @app.command()
 def status() -> None:
-    """Show agent registration status."""
+    """Show agent registration status.
+
+    Example:
+
+        vsa agent status
+
+    Prints contents of /etc/vsa/agent.env (with token redacted). For the
+    actual sync state see `sudo journalctl -u vsa-agent.service -n 20`.
+    """
     if AGENT_ENV_PATH.exists():
         content = AGENT_ENV_PATH.read_text()
         for line in content.strip().splitlines():

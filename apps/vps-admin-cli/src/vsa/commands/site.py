@@ -73,7 +73,34 @@ def provision(
         ),
     ),
 ) -> None:
-    """Provision a site behind the reverse proxy with SSL."""
+    """Provision a site behind the reverse proxy with SSL.
+
+    Examples:
+
+        # Standard: container name + port
+        vsa site provision --domain example.com --container web-1 --port 3000
+
+        # Auto-detect container by published host port
+        vsa site provision --domain example.com --port 3000 --detect --external-port 8080
+
+        # Technical subdomain — no www.
+        vsa site provision --domain api.example.com --container api --port 8080 --no-www
+
+        # Skip SSL (testing only — vhost still serves HTTP-only)
+        vsa site provision --domain test.local --container test --port 8080 --skip-cert
+
+        # Warm-standby host (no container running here, DNS-01 cert)
+        vsa site provision --domain app.lokalflash.ch --container lokalflash-frontend \\
+                           --port 80 --no-www --standby
+
+    For multi-VPS deployments use `vsa fleet site-provision` from the hub
+    instead — it orchestrates primary + standbys + writes the assignment
+    row in one shot.
+
+    Steps: ensure mount dirs → connect container to flowbiz_ext → HTTP
+    vhost for ACME → reload → issue cert (HTTP-01 default, or DNS-01 with
+    --standby) → HTTPS vhost → reload.
+    """
     cfg = get_config()
 
     with audit(
@@ -193,7 +220,23 @@ def unprovision(
     keep_cert: bool = typer.Option(False, "--keep-cert", help="Don't delete the Let's Encrypt certificate"),
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt"),
 ) -> None:
-    """Remove a site and all its underlying resources (vhost, auth, cert, logs, container)."""
+    """Remove a site and all its underlying resources (vhost, auth, cert, logs, container).
+
+    Examples:
+
+        vsa site unprovision --domain old.example.com
+        vsa site unprovision --domain old.example.com -y           # non-interactive
+        vsa site unprovision --domain X --keep-container -y        # keep the upstream
+        vsa site unprovision --domain X --keep-cert -y             # keep the LE cert
+
+    6-step cleanup: vhost → htpasswd → LE cert → access logs →
+    container (with shared-detection: prompts/keeps if other vhosts
+    reference the same upstream) → nginx reload.
+
+    Use `--keep-container` if the container is shared with another stack
+    or you want to inspect it later. Use `--keep-cert` if you plan to
+    re-provision soon and want to avoid an extra LE issuance.
+    """
     cfg = get_config()
 
     # Detect container from the vhost config before deleting it
@@ -321,7 +364,16 @@ def unprovision(
 
 @app.command(name="list")
 def list_sites() -> None:
-    """List all provisioned sites."""
+    """List all provisioned sites.
+
+    Example:
+
+        vsa site list
+
+    Reads vhost files from the local mount dir. For a fleet-wide view
+    across all VPS, use the dashboard `/domains` page or
+    `vsa fleet exec --vps X -- site list`.
+    """
     cfg = get_config()
     vhost_dir = cfg.repo_vhost_dir
 

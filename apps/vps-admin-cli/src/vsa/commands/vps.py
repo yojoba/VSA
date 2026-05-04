@@ -44,7 +44,12 @@ def _hub_client() -> tuple[str, dict[str, str]]:
 
 @app.command("list")
 def list_vps() -> None:
-    """List all registered VPS nodes."""
+    """List all registered VPS nodes.
+
+    Example:
+
+        vsa vps list
+    """
     hub_url, headers = _hub_client()
 
     resp = httpx.get(f"{hub_url}/agent/vps", headers=headers, timeout=30.0)
@@ -81,7 +86,16 @@ def add_vps(
     hostname: str = typer.Option("", "--hostname", "-h", help="Hostname of the VPS"),
     ip_address: str = typer.Option("", "--ip", help="IP address of the VPS"),
 ) -> None:
-    """Register a new VPS node in the dashboard."""
+    """Register a new VPS node in the dashboard.
+
+    Example:
+
+        vsa vps add --id vps-04 --hostname newserver --ip 1.2.3.4
+
+    Pre-creates the row in the registry. The new VPS still needs to run
+    `vsa agent register --hub-url ... --token ...` and start its systemd
+    timer to actually push state. See docs/runbooks/fleet_access.md.
+    """
     hub_url, headers = _hub_client()
 
     with audit("vps.add", target=vps_id, hostname=hostname, ip_address=ip_address):
@@ -110,7 +124,17 @@ def remove_vps(
     vps_id: str = typer.Argument(..., help="VPS ID to remove (e.g. 'vps-02')"),
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation"),
 ) -> None:
-    """Remove a VPS node and all its associated data from the dashboard."""
+    """Remove a VPS node and all its associated data from the dashboard.
+
+    Examples:
+
+        vsa vps remove vps-04                  # interactive confirmation
+        vsa vps remove vps-04 -y               # non-interactive
+
+    Cascade deletes: the VPS row + all its domains + cert observations +
+    container snapshots + traffic stats. Does NOT touch the VPS itself —
+    decommission the host separately.
+    """
     hub_url, headers = _hub_client()
 
     if not yes:

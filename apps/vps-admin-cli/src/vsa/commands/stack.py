@@ -33,7 +33,14 @@ def _resolve_compose(name: Optional[str]) -> Path:
 def up(
     name: Optional[str] = typer.Argument(None, help="Stack name (or run from stack dir)"),
 ) -> None:
-    """Start a stack (docker compose up -d --build)."""
+    """Start a stack (docker compose up -d --build).
+
+    Examples:
+
+        vsa stack up reverse-proxy           # named stack from stacks/
+        vsa stack up dashboard
+        vsa stack up                         # in a stack dir, uses ./compose.yml
+    """
     compose = _resolve_compose(name)
     with audit("stack.up", target=name or compose.parent.name):
         docker.compose_up(compose)
@@ -44,7 +51,12 @@ def up(
 def down(
     name: Optional[str] = typer.Argument(None, help="Stack name"),
 ) -> None:
-    """Stop a stack (docker compose down)."""
+    """Stop a stack (docker compose down).
+
+    Example:
+
+        vsa stack down dashboard
+    """
     compose = _resolve_compose(name)
     with audit("stack.down", target=name or compose.parent.name):
         docker.compose_down(compose)
@@ -56,7 +68,13 @@ def logs(
     name: Optional[str] = typer.Argument(None, help="Stack name"),
     tail: int = typer.Option(200, help="Number of lines to show"),
 ) -> None:
-    """Show stack logs."""
+    """Show stack logs.
+
+    Examples:
+
+        vsa stack logs reverse-proxy                # follow last 200 lines
+        vsa stack logs dashboard --tail 1000        # last 1000 lines
+    """
     compose = _resolve_compose(name)
     docker.compose_logs(compose, tail=tail)
 
@@ -65,7 +83,12 @@ def logs(
 def ps(
     name: Optional[str] = typer.Argument(None, help="Stack name"),
 ) -> None:
-    """Show stack container status."""
+    """Show stack container status.
+
+    Example:
+
+        vsa stack ps reverse-proxy
+    """
     compose = _resolve_compose(name)
     output = docker.compose_ps(compose)
     console.print(output)
@@ -75,7 +98,16 @@ def ps(
 def new(
     name: str = typer.Argument(help="New stack name"),
 ) -> None:
-    """Create a new stack from template."""
+    """Create a new stack from template.
+
+    Example:
+
+        vsa stack new my-app
+        # → stacks/my-app/{compose.yml, Makefile, .env.example, README.md}
+
+    Scaffolds with nginx:alpine as a placeholder service. Edit compose.yml
+    afterwards to set the real image, ports, volumes, etc.
+    """
     cfg = get_config()
     stack_dir = cfg.stack_dir / name
 

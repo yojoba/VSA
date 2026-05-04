@@ -35,7 +35,18 @@ def assign(
     ),
     notes: str = typer.Option("", "--notes", help="Free-form notes"),
 ) -> None:
-    """Set or update the primary + standby VPS for a domain."""
+    """Set or update the primary + standby VPS for a domain.
+
+    Examples:
+
+        vsa fleet assign --domain lokalflash.ch --primary vps-02 --standbys vps-03
+        vsa fleet assign --domain api.flowbiz.ai --primary vps-01
+        vsa fleet assign --domain api.flowbiz.ai --primary vps-01 \\
+                         --standbys vps-02,vps-03 --notes "Multi-region"
+
+    Validation: primary cannot also be in standbys; standby list is
+    deduplicated. Upsert: re-running with new values updates the row.
+    """
     standby_list = _split_csv(standbys)
 
     with audit(
@@ -60,7 +71,14 @@ def assign(
 
 @app.command(name="list")
 def list_assignments() -> None:
-    """List all domain assignments across the fleet."""
+    """List all domain assignments across the fleet.
+
+    Example:
+
+        vsa fleet list
+
+    Shows a Rich table with domain, primary, standbys, and notes.
+    """
     rows = hub_client.list_assignments()
 
     if not rows:
@@ -84,7 +102,13 @@ def list_assignments() -> None:
 
 @app.command()
 def show(domain: str = typer.Argument(..., help="Domain to show")) -> None:
-    """Show the assignment for one domain (404 if none)."""
+    """Show the assignment for one domain (404 if none).
+
+    Examples:
+
+        vsa fleet show lokalflash.ch
+        vsa fleet show dashboard.flowbiz.ai
+    """
     a = hub_client.get_assignment(domain)
     if a is None:
         console.print(f"[red]No assignment for {domain}[/red]")
@@ -97,7 +121,17 @@ def remove(
     domain: str = typer.Argument(..., help="Domain to remove from the registry"),
     yes: bool = typer.Option(False, "-y", "--yes", help="Skip confirmation"),
 ) -> None:
-    """Remove the assignment for a domain (does not touch agent-synced data)."""
+    """Remove the assignment for a domain (does not touch agent-synced data).
+
+    Examples:
+
+        vsa fleet remove staging.example.com
+        vsa fleet remove staging.example.com -y     # non-interactive
+
+    Only the registry row is removed — vhosts, certs, and DNS aren't
+    touched. Use `vsa site unprovision` (locally or via `vsa fleet exec`)
+    to actually decommission the domain.
+    """
     if not yes:
         confirm = typer.confirm(f"Remove assignment for {domain}?", default=False)
         if not confirm:
@@ -119,6 +153,15 @@ def backfill(
 
     Domains hosted on multiple VPS are *skipped* — they need an explicit
     `vsa fleet assign --primary X` decision.
+
+    Examples:
+
+        vsa fleet backfill --dry-run         # preview without writing
+        vsa fleet backfill                   # actually create the rows
+
+    Typical first-run flow on a fresh hub:
+        vsa fleet assign --domain prod.example.com --primary vps-02 --standbys vps-03
+        vsa fleet backfill                   # picks up everything else
     """
     domains = hub_client.list_domains()
     existing = {a["domain"]: a for a in hub_client.list_assignments()}
@@ -188,14 +231,18 @@ def exec(
 ) -> None:
     """Run a `vsa <args>` command on a remote VPS via the hub command queue.
 
-    Usage:
+    Examples:
 
         vsa fleet exec --vps vps-03 -- cert health
         vsa fleet exec --vps vps-02 -- vhost sync
+        vsa fleet exec --vps vps-03 -- cert status
+        vsa fleet exec --vps vps-02 --timeout 300 -- cert renew
+        vsa fleet exec --vps vps-02 -- site list
+        vsa fleet exec --vps vps-03 -- site unprovision --domain X --keep-container -y
 
     The args after ``--`` are the argv passed to the remote `vsa`. Output
     streams back once the agent has executed it (next agent tick = up to
-    ~30s of latency).
+    ~30s of latency). Exit code mirrors the remote command.
     """
     argv = list(ctx.args)
     if not argv:
@@ -225,7 +272,17 @@ def exec(
 def vhost_sync(
     vps: str = typer.Option(..., "--vps", help="Target vps_id"),
 ) -> None:
-    """Run `vsa vhost sync` on a remote VPS (copies repo confs into the bind-mount)."""
+    """Run `vsa vhost sync` on a remote VPS (copies repo confs into the bind-mount).
+
+    Examples:
+
+        vsa fleet vhost-sync --vps vps-02
+        vsa fleet vhost-sync --vps vps-03
+
+    Equivalent to `vsa fleet exec --vps X -- vhost sync`. Use after
+    `git pull` on a remote VPS to push the new vhost set into nginx's
+    bind-mount.
+    """
     with audit("fleet.vhost-sync", target=vps):
         cmd = hub_client.exec_and_wait(
             vps_id=vps,
@@ -240,7 +297,17 @@ def vhost_sync(
 def cert_renew(
     vps: str = typer.Option(..., "--vps", help="Target vps_id"),
 ) -> None:
-    """Run `vsa cert renew` on a remote VPS."""
+    """Run `vsa cert renew` on a remote VPS.
+
+    Examples:
+
+        vsa fleet cert-renew --vps vps-02      # force a renew cycle now
+        vsa fleet cert-renew --vps vps-03
+
+    No-op if no cert is within 30 days of expiry. The certbot container's
+    own 12h loop handles routine renewal — use this for one-off forces or
+    after a manual cert config change.
+    """
     with audit("fleet.cert-renew", target=vps):
         cmd = hub_client.exec_and_wait(
             vps_id=vps,
@@ -262,7 +329,16 @@ def cert_health(
         False, "--all", help="Run on every VPS in the registry"
     ),
 ) -> None:
-    """Run `vsa cert health` on one VPS or the whole fleet."""
+    """Run `vsa cert health` on one VPS or the whole fleet.
+
+    Examples:
+
+        vsa fleet cert-health --vps vps-03    # one host
+        vsa fleet cert-health --all           # iterate every registered VPS
+
+    With `--all`, exits non-zero if ANY VPS reported critical findings.
+    Suitable for cron — pipe stdout to a log file.
+    """
     targets: list[str]
     if all_vps:
         from vsa.services import hub_client as hc
@@ -304,6 +380,24 @@ def drift(
     ),
 ) -> None:
     """Cross-check intent (assignments) vs observed (domains/certs) across the fleet.
+
+    Examples:
+
+        vsa fleet drift                       # critical + warning only
+        vsa fleet drift --show-info           # also list orphan domains
+        vsa fleet drift > /var/log/vsa/drift.log 2>&1  # cron-friendly
+
+    Finding kinds:
+      missing-on-primary     — assignment exists but no vhost on primary VPS
+      missing-on-standby     — standby VPS has no vhost (failover would fail)
+      rogue-host             — vhost on a VPS not in primary/standbys list
+      primary-cert-missing   — no cert on primary VPS (critical)
+      standby-cert-missing   — no cert on standby VPS (warning)
+      cert-expired           — past expiry (critical)
+      cert-expiring-soon     — ≤14d critical, ≤30d warning
+      domain-without-assignment — observed but unclaimed (info; --show-info)
+
+    SAN-aware: a single cert covering apex + www isn't flagged twice.
 
     Exits non-zero if any critical findings (suitable for cron / CI gates).
     """
@@ -365,6 +459,29 @@ def site_provision(
 
     Updates the domain_assignments registry on success so the dashboard
     reflects the new layout.
+
+    Examples:
+
+        # Single primary, no standby (most common — same as `vsa site provision`
+        # but routed through the hub queue + writes the assignment row)
+        vsa fleet site-provision --domain api.example.com \\
+                                 --primary vps-01 \\
+                                 --container api-app --port 3000
+
+        # Active-passive with one standby (production LokalFlash pattern)
+        vsa fleet site-provision --domain app.lokalflash.ch \\
+                                 --primary vps-02 --standbys vps-03 \\
+                                 --container lokalflash-frontend --port 80 --no-www
+
+        # Multiple standbys (active-passive-passive)
+        vsa fleet site-provision --domain critical.example.com \\
+                                 --primary vps-01 --standbys vps-02,vps-03 \\
+                                 --container critical-app --port 8080
+
+    Stops if the primary fails. Continues through standby failures so a
+    partial rollout is recoverable by re-running the same command. Each
+    standby needs its `compose.dns-cloudflare.yml` override active (see
+    docs/runbooks/dns01_cloudflare.md).
     """
     standby_list = _split_csv(standbys)
     base_argv = ["site", "provision", "--domain", domain, "--container", container, "--port", str(port)]

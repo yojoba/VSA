@@ -21,7 +21,26 @@ def _run(cmd: list[str], *, sudo: bool = False) -> None:
 
 
 def bootstrap() -> None:
-    """Initialize a fresh VPS with Docker, Compose, UFW, and base directories."""
+    """Initialize a fresh VPS with Docker, Compose, UFW, and base directories.
+
+    Example:
+
+        sudo vsa bootstrap
+
+    Run once on a fresh VPS. Idempotent — safe to re-run if interrupted.
+
+    Steps:
+      1. apt-get install ca-certificates / curl / ufw / fail2ban / jq / wget
+      2. Install Docker Engine + Compose v2 (via get.docker.com if missing)
+      3. Configure UFW: allow 22/tcp, 80/tcp, 443/tcp; enable firewall
+      4. Create the `flowbiz_ext` external Docker network
+      5. mkdir -p the reverse-proxy directory tree under /srv/flowbiz/
+
+    Note: the standalone `infra/scripts/bootstrap_vps.sh` does the same
+    + chowns /var/log/vsa and /var/lib/vsa to the calling user. Prefer
+    that script for a brand-new VPS, then `uv tool install --from . vsa-cli`
+    + `vsa agent register …`.
+    """
     cfg = get_config()
 
     with audit("bootstrap", target=cfg.vps_id):

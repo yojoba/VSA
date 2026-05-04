@@ -19,7 +19,20 @@ console = Console()
 
 @app.command()
 def sync() -> None:
-    """Sync vhost and snippet files from repo to mounted directory, then reload NGINX."""
+    """Sync vhost and snippet files from repo to mounted directory, then reload NGINX.
+
+    Example:
+
+        vsa vhost sync
+
+    Rsyncs `stacks/reverse-proxy/nginx/{conf.d,snippets}/` →
+    `/srv/flowbiz/reverse-proxy/nginx/...` (the bind-mount nginx loads).
+    Uses `--delete` so files removed from the repo are removed from the
+    mount too. Validates with `nginx -t` before reloading.
+
+    For multi-VPS: run on each VPS separately, or from the hub:
+    `vsa fleet vhost-sync --vps vps-X`.
+    """
     cfg = get_config()
 
     with audit("vhost.sync"):
@@ -40,7 +53,12 @@ def sync() -> None:
 
 @app.command(name="list")
 def list_vhosts() -> None:
-    """List all vhost config files."""
+    """List all vhost config files.
+
+    Example:
+
+        vsa vhost list
+    """
     cfg = get_config()
     vhost_dir = cfg.repo_vhost_dir
 
@@ -56,7 +74,12 @@ def list_vhosts() -> None:
 def show(
     domain: str = typer.Argument(help="Domain name to show config for"),
 ) -> None:
-    """Display the NGINX vhost config for a domain."""
+    """Display the NGINX vhost config for a domain.
+
+    Example:
+
+        vsa vhost show dashboard.flowbiz.ai
+    """
     cfg = get_config()
     vhost_file = cfg.repo_vhost_dir / f"{domain}.conf"
 

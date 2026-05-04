@@ -22,7 +22,16 @@ def add(
     user: str = typer.Option(..., help="Username"),
     password: str = typer.Option(..., prompt=True, hide_input=True, help="Password"),
 ) -> None:
-    """Add HTTP Basic Auth to a domain."""
+    """Add HTTP Basic Auth to a domain.
+
+    Examples:
+
+        vsa auth add --domain admin.example.com --user alice
+        # → prompts for password (hidden input), generates bcrypt htpasswd
+
+    Updates the existing vhost to include `auth_basic` + `auth_basic_user_file`
+    directives. Run AFTER `vsa site provision` (vhost must already exist).
+    """
     cfg = get_config()
 
     with audit("auth.add", target=domain, user=user):
@@ -65,7 +74,15 @@ def add(
 def remove(
     domain: str = typer.Option(..., help="Domain to unprotect"),
 ) -> None:
-    """Remove HTTP Basic Auth from a domain."""
+    """Remove HTTP Basic Auth from a domain.
+
+    Example:
+
+        vsa auth remove --domain admin.example.com
+
+    Strips the `auth_basic` directives from the vhost and deletes the
+    htpasswd file. Run `vsa vhost sync` after to push to the bind-mount.
+    """
     cfg = get_config()
 
     with audit("auth.remove", target=domain):
@@ -96,7 +113,12 @@ def remove(
 
 @app.command(name="list")
 def list_auth() -> None:
-    """List domains with Basic Auth enabled."""
+    """List domains with Basic Auth enabled.
+
+    Example:
+
+        vsa auth list
+    """
     cfg = get_config()
     auth_dir = cfg.repo_auth_dir
 
