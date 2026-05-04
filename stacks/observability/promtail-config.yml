@@ -15,6 +15,7 @@ scrape_configs:
       path: /var/log/journal
       labels:
         job: systemd-journal
+        vps_id: vps-01
     relabel_configs:
       - source_labels: ['__journal__systemd_unit']
         target_label: systemd_unit
@@ -24,6 +25,7 @@ scrape_configs:
       - targets: [localhost]
         labels:
           job: nginx-access
+          vps_id: vps-01
           __path__: /srv/flowbiz/*/logs/nginx/access*.log
     pipeline_stages:
       - regex:
@@ -42,6 +44,7 @@ scrape_configs:
       - targets: [localhost]
         labels:
           job: nginx-domain-access
+          vps_id: vps-01
           __path__: /srv/flowbiz/reverse-proxy/logs/domains/*.access.json
     pipeline_stages:
       - json:
@@ -69,6 +72,7 @@ scrape_configs:
       - targets: [localhost]
         labels:
           job: nginx-error
+          vps_id: vps-01
           __path__: /srv/flowbiz/*/logs/nginx/error*.log
 
   - job_name: vsa-audit
@@ -76,6 +80,7 @@ scrape_configs:
       - targets: [localhost]
         labels:
           job: vsa-audit
+          vps_id: vps-01
           __path__: /var/log/vsa/audit.jsonl
     pipeline_stages:
       - json:
@@ -83,13 +88,11 @@ scrape_configs:
             actor: actor
             action: action
             result: result
-            vps_id: vps_id
             target: target
       - labels:
           actor:
           action:
           result:
-          vps_id:
       - timestamp:
           source: timestamp
           format: "2006-01-02T15:04:05.000Z"
@@ -107,3 +110,5 @@ scrape_configs:
         target_label: compose_project
       - source_labels: ['__meta_docker_container_log_stream']
         target_label: stream
+      - target_label: vps_id
+        replacement: vps-01
