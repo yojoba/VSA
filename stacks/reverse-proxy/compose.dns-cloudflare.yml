@@ -1,0 +1,27 @@
+# Override applied on VPS that issue/renew Let's Encrypt certs via Cloudflare
+# DNS-01 challenge (instead of the default HTTP-01 webroot challenge).
+#
+# Use case: warm-standby VPS whose domains DNS-resolve to a different host,
+# so HTTP-01 challenges from this VPS would fail. With DNS-01 + a Cloudflare
+# API token, certbot can prove control of the zone without serving HTTP.
+#
+# To activate, on the VPS that should run with this override:
+#   1. Create /srv/flowbiz/reverse-proxy/cloudflare/cloudflare.ini  (mode 600)
+#         dns_cloudflare_api_token = <token with Zone:DNS:Edit on the zone>
+#   2. Set COMPOSE_FILE=compose.yml:compose.dns-cloudflare.yml in
+#      stacks/reverse-proxy/.env  (or pass `-f compose.yml -f compose.dns-cloudflare.yml`).
+#   3. Issue certs with:
+#         docker exec reverse-proxy-certbot certbot certonly --dns-cloudflare \
+#           --dns-cloudflare-credentials /cf/cloudflare.ini \
+#           --dns-cloudflare-propagation-seconds 30 \
+#           --email <email> --agree-tos --no-eff-email -d <domain>
+#      The renewal config records dns-cloudflare as the authenticator, so
+#      the regular `certbot renew` (run by the container every 12h) handles
+#      renewals automatically.
+services:
+  certbot:
+    image: certbot/dns-cloudflare:v2.10.0
+    volumes:
+      - /srv/flowbiz/reverse-proxy/letsencrypt:/etc/letsencrypt
+      - /srv/flowbiz/reverse-proxy/certbot-www:/var/www/certbot
+      - /srv/flowbiz/reverse-proxy/cloudflare:/cf:ro
