@@ -8,6 +8,11 @@ Type=oneshot
 ExecStart=/usr/local/bin/vsa agent start
 EnvironmentFile=/etc/vsa/agent.env
 User=root
+# Don't write __pycache__/*.pyc into the user-owned uv tool dir — when the
+# agent runs as root, those files end up root-owned, blocking subsequent
+# `uv tool install --reinstall` runs by the non-root user. Hit this footgun
+# multiple times during the 2026-05-04 rollout.
+Environment=PYTHONDONTWRITEBYTECODE=1
 StandardOutput=journal
 StandardError=journal
 

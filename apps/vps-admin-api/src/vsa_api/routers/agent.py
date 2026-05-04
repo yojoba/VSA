@@ -101,8 +101,25 @@ async def agent_audit_sync(
     """Receive batch audit events from a remote VPS agent."""
     count = 0
     for event_data in payload.events:
+        # The agent's local SQLite stores timestamps as ISO-8601 strings, but
+        # PostgreSQL via asyncpg requires a datetime. Coerce here — falling
+        # back to "now" for malformed inputs so one bad row doesn't reject
+        # the whole batch (was returning 500 on every tick before this fix).
+        ts_raw = event_data.get("timestamp")
+        if isinstance(ts_raw, datetime):
+            ts = ts_raw
+        elif isinstance(ts_raw, str) and ts_raw:
+            try:
+                ts = datetime.fromisoformat(ts_raw.replace("Z", "+00:00"))
+            except ValueError:
+                ts = datetime.now(timezone.utc)
+        else:
+            ts = datetime.now(timezone.utc)
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+
         log = AuditLog(
-            timestamp=event_data.get("timestamp", datetime.now(timezone.utc)),
+            timestamp=ts,
             vps_id=event_data.get("vps_id", ""),
             actor=event_data.get("actor", ""),
             action=event_data.get("action", ""),

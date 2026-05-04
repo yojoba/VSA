@@ -33,12 +33,10 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:
       - flowbiz_ext
-    healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:9080/ready"]
-      interval: 30s
-      timeout: 5s
-      retries: 5
-      start_period: 20s
+    # No healthcheck: grafana/promtail:3.0.0 is FROM scratch — no shell,
+    # no wget/curl/nc — so docker can't run any external check. The compose
+    # restart policy + the agent's own connectivity to Loki are the
+    # health signals we rely on.
 
 volumes:
   promtail-data:
