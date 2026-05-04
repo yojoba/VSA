@@ -164,23 +164,38 @@ def parse_cert_output(raw: str) -> list[dict[str, str]]:
 
 
 _UPSTREAM_RE = re.compile(r"set\s+\$\w*upstream\s+(.+?):(\d+)\s*;")
+# Multipoint pattern: `set $route_1 backend:port;` etc. used by app vhosts
+# that route different paths to different containers. Take the first match
+# as the "primary" backend for display purposes.
+_ROUTE_RE = re.compile(r"set\s+\$\w+\s+([\w-]+):(\d+)\s*;")
 
 
 def collect_domains(vhost_dir: Path) -> list[dict[str, Any]]:
-    """Scan NGINX vhost .conf files and extract domain/container/port."""
+    """Scan NGINX vhost .conf files and extract domain/container/port.
+
+    Skips macOS AppleDouble resource forks (``._*``) and any file that
+    fails UTF-8 decode — neither shape can possibly contain a valid
+    nginx upstream directive. Without this, a single stray ``._*`` file
+    (e.g. left behind by an rsync from macOS) would crash the agent and
+    block the entire domains-sync.
+    """
     domains: list[dict[str, Any]] = []
     if not vhost_dir.is_dir():
         return domains
     for conf in sorted(vhost_dir.glob("*.conf")):
-        domain = conf.stem  # e.g. "dify.flowbiz.ai"
-        content = conf.read_text()
-        match = _UPSTREAM_RE.search(content)
+        if conf.name.startswith("._"):
+            continue
+        try:
+            content = conf.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError):
+            continue
+        match = _UPSTREAM_RE.search(content) or _ROUTE_RE.search(content)
         if match:
             container = match.group(1)
             port = int(match.group(2))
             domains.append(
                 {
-                    "domain": domain,
+                    "domain": conf.stem,
                     "container": container,
                     "port": port,
                 }
