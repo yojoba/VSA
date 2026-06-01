@@ -61,6 +61,41 @@ sudo systemctl enable --now vsa-alert.timer
 systemctl list-timers vsa-alert.timer
 ```
 
+## Turn it on / off / pause
+
+```bash
+# ON  (enable + start firing every 15 min)
+sudo systemctl enable --now vsa-alert.timer
+
+# OFF (stop + don't start on boot)
+sudo systemctl disable --now vsa-alert.timer
+
+# PAUSE temporarily (until next reboot or manual start)
+sudo systemctl stop vsa-alert.timer
+
+# Is it on? next fire?
+systemctl is-enabled vsa-alert.timer
+systemctl list-timers vsa-alert.timer
+```
+
+Disabling the timer stops all emails immediately; the `vsa alert` commands
+still work by hand. To keep the timer running but **mute a specific noisy
+problem**, prefer raising the level or the ignore-list below rather than
+disabling everything.
+
+### Quick on/off knobs (edit `/etc/vsa/alert.env`, no restart needed)
+
+| Want to… | Change |
+| --- | --- |
+| Only get **critical** alerts (quieter) | `VSA_ALERT_MIN_LEVEL=critical` |
+| Get **everything** incl. info | `VSA_ALERT_MIN_LEVEL=info` |
+| Change who's emailed | `VSA_ALERT_TO=a@x.ch,b@y.ch` |
+| Stop alerting on a cosmetic-unhealthy container | add its name to `VSA_ALERT_IGNORE_CONTAINERS` (comma substrings) |
+| Be more/less patient about a silent agent | `VSA_ALERT_AGENT_STALE_MINUTES=30` |
+
+Each `vsa alert` run reads the env fresh, so edits take effect on the next
+timer fire (≤15 min) — no `systemctl restart` required.
+
 ## Configuration reference
 
 All `VSA_ALERT_*` env vars live in `/etc/vsa/alert.env`. See

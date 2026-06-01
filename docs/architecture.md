@@ -465,6 +465,37 @@ vsa site unprovision --domain example.com
   └─ [6/6] Reload NGINX
 ```
 
+## Fleet Alerting (email alarms)
+
+`vsa alert` turns observed fleet state into email alarms. It is **read-only
+over the hub API** — no new data source — and runs on the hub via
+`vsa-alert.timer` (every 15 min).
+
+```
+vsa-alert.timer (15 min)
+  └─ vsa alert check
+       ├─ GET /api/fleet/drift   → cert + layout problems
+       ├─ GET /api/vps           → agents with stale last_seen (system down)
+       ├─ GET /api/containers    → down / unhealthy containers
+       │
+       ├─ filter ≥ VSA_ALERT_MIN_LEVEL  →  list[Problem]
+       ├─ diff vs /var/lib/vsa/alert-state.json
+       │     new/escalated problem  → 🔴 email digest
+       │     all cleared            → ✅ recovery email
+       │     unchanged              → silent (no email)
+       └─ SMTP STARTTLS (stdlib) → recipients
+```
+
+Design points:
+- **Email only on change** — the state file makes alerts idempotent per
+  problem-set, so a persistent issue isn't re-mailed every 15 min.
+- **Transport-agnostic core** — `services/alerting.py` produces a `Problem`
+  list + renders text/HTML; only `send_email` is SMTP-specific (extend there
+  for Slack/Telegram).
+- **Config is operational, not code** — all `VSA_ALERT_*` env in
+  `/etc/vsa/alert.env` (gitignored). On/off = enable/disable the timer.
+- See `docs/runbooks/alerting.md`.
+
 ## Data Retention Policies
 
 | Data | Retention | Enforcement |

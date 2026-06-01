@@ -150,7 +150,18 @@ vsa fleet site-provision \
 # Drift detection — flag mismatches between intent and observed state
 vsa fleet drift                                 # Critical+warning only (exits 1 if any critical)
 vsa fleet drift --show-info                     # Include "info" findings (orphan domains, etc.)
+
+# Email alerting — alarms for cert + system problems (runs on the hub via vsa-alert.timer)
+vsa alert status                                # current problems, no email
+vsa alert check                                 # email on change (cert expiry, stale agents, down/unhealthy containers)
+vsa alert check --dry-run                       # preview the email, send nothing
+vsa alert test                                  # send a test email to verify SMTP
 ```
+
+Alerting config lives in `/etc/vsa/alert.env` (SMTP creds + recipients +
+`VSA_ALERT_MIN_LEVEL`). It emails **only on change** (new/escalated problem or
+full recovery), de-duped via `/var/lib/vsa/alert-state.json`. See
+[docs/runbooks/alerting.md](docs/runbooks/alerting.md).
 
 ### Multi-VPS prerequisites
 
@@ -288,6 +299,7 @@ vsa cert install-cron
 - [Runbook: Provision a Site](docs/runbooks/provision_site.md)
 - [Runbook: DNS-01 Cloudflare Cert Auto-Renewal](docs/runbooks/dns01_cloudflare.md)
 - [Runbook: Fleet Health Timers (drift + cert-health)](docs/runbooks/fleet_health_timers.md)
+- [Runbook: Fleet Alerting (email alarms)](docs/runbooks/alerting.md)
 - [Runbook: Observability Agent](docs/runbooks/observability_agent.md)
 - [Runbook: Fleet Access](docs/runbooks/fleet_access.md)
 - [Runbook: Restore](docs/runbooks/restore.md)

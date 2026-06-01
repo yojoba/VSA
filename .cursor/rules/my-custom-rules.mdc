@@ -56,7 +56,10 @@ Hub-side ops require `VSA_HUB_URL` + `VSA_HUB_AUTH=admin:<pass>` in `/etc/vsa/ag
 **Fleet health timers (active on hub):**
 - `vsa-drift.timer` — daily 08:00, runs `vsa fleet drift`
 - `vsa-fleet-cert-health.timer` — weekly Mon 09:00, runs `vsa fleet cert-health --all`
-- Both: `EnvironmentFile=/etc/vsa/agent.env`, output → journalctl → Promtail → central Loki. See `docs/runbooks/fleet_health_timers.md`.
+- `vsa-alert.timer` — **every 15 min**, runs `vsa alert check` (emails cert + system alarms on change; config in `/etc/vsa/alert.env`, SMTP STARTTLS). See `docs/runbooks/alerting.md`.
+- All: `EnvironmentFile=/etc/vsa/agent.env`, output → journalctl → Promtail → central Loki. See `docs/runbooks/fleet_health_timers.md`.
+
+**`vsa alert`** (commit `c6a715b`): collects problems from `/fleet/drift` + `/vps` (stale agents) + `/containers` (down/unhealthy) at/above `VSA_ALERT_MIN_LEVEL`, dedups via `/var/lib/vsa/alert-state.json` (emails only on change), sends HTML+text via SMTP. Transport-agnostic `Problem` model in `services/alerting.py` — extend `send_email` for Slack/Telegram. `vsa alert {status,test,check --dry-run}`.
 
 **`vsa fleet --help` trap:** never reintroduce `@app.callback()` on the fleet group that raises on missing env — Typer fires it before resolving `--help`. The check belongs in each command body or `hub_client._client()` (where it already lives).
 

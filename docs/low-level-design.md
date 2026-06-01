@@ -293,3 +293,39 @@ dify-net (isolated bridge)
 | Dashboard API config | `apps/vps-admin-api/src/vsa_api/config.py` | Python (Pydantic) |
 | DB migrations | `apps/vps-admin-api/alembic/versions/` | Python (Alembic) |
 | System mounts | `/etc/fstab` | fstab |
+| Hub/agent env (HUB_URL, HUB_AUTH, VPS_ID) | `/etc/vsa/agent.env` | env (mode 600) |
+| Alerting config (SMTP, recipients, level) | `/etc/vsa/alert.env` | env (mode 600, gitignored) |
+| Alert dedup state | `/var/lib/vsa/alert-state.json` | JSON (root-owned, written by timer) |
+| DNS-01 Cloudflare token | `/srv/flowbiz/reverse-proxy/cloudflare/cloudflare.ini` | INI (mode 600) |
+| reverse-proxy compose override toggle | `stacks/reverse-proxy/.env` (`COMPOSE_FILE=`) | env (gitignored) |
+
+## Systemd Timers (hub, vps-01)
+
+| Timer | Cadence | Runs | Env |
+|-------|---------|------|-----|
+| `vsa-agent.timer` | every 30s | `vsa agent start` | `/etc/vsa/agent.env` |
+| `vsa-drift.timer` | daily 08:00 | `vsa fleet drift` | `/etc/vsa/agent.env` |
+| `vsa-fleet-cert-health.timer` | weekly Mon 09:00 | `vsa fleet cert-health --all` | `/etc/vsa/agent.env` |
+| `vsa-alert.timer` | every 15 min | `vsa alert check` | `/etc/vsa/agent.env` + `/etc/vsa/alert.env` |
+
+(`vsa-agent.timer` also runs on vps-02/03; the rest are hub-only.)
+
+## Alerting Internals (`vsa alert`)
+
+- **Service:** `services/alerting.py` — `AlertConfig.from_env()` reads all
+  `VSA_ALERT_*`; `collect_problems()` queries `/fleet/drift` + `/vps` +
+  `/containers`; problems carry `(level, category, vps, target, detail)` and a
+  stable `key` (`category|vps|target|level`).
+- **Severity:** container `(unhealthy)` → warning; container not `Up` and not
+  `Exited (0)` → critical; agent `last_seen` older than
+  `VSA_ALERT_AGENT_STALE_MINUTES` → critical. Drift findings keep their reported
+  level. Only `≥ VSA_ALERT_MIN_LEVEL` is kept.
+- **Dedup state:** `/var/lib/vsa/alert-state.json` holds the sorted set of
+  active problem `key`s. `vsa alert check` emails only when that set changes
+  (new key → 🔴, empty after non-empty → ✅, no change → silent). `--force`
+  overrides; `--dry-run` skips both send and state write.
+- **Exit code:** `vsa alert check` exits 1 when a critical problem is active;
+  the systemd unit sets `SuccessExitStatus=0 1` so the timer never trips an
+  OnFailure loop.
+- **SMTP:** stdlib `smtplib` over STARTTLS (port 587), multipart text+HTML. No
+  new Python dependency.

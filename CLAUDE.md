@@ -70,9 +70,24 @@ warning / 0 info**.
    (`module 'click' has no attribute 'command'`). Fix: `sudo chown -R $USER:$USER
    ~/.local/share/uv && uv tool uninstall vsa-cli && uv tool install . --no-cache`.
 
+**Email alerting (`vsa alert`, commit `c6a715b`).** New `vsa alert` command
+group + `vsa-alert.timer` (every 15 min on the hub) that emails alarms for cert
+**and** system problems. `vsa alert check` queries the hub
+(`/fleet/drift` + `/vps` + `/containers`), collects problems — cert
+expiry/drift, agents that stopped reporting (`last_seen` stale), down/unhealthy
+containers — at/above `VSA_ALERT_MIN_LEVEL`, and emails a digest. It dedups via
+`/var/lib/vsa/alert-state.json` so it only emails **on change** (new/escalated
+problem, or full recovery), never spamming. SMTP over STARTTLS, stdlib-only.
+Config in `/etc/vsa/alert.env` (mode 600, gitignored) — currently
+`alarms@lokalflash.ch` via Infomaniak → `alexandre@netcool.ch` +
+`info@flowbiz.ai`, min level `warning`. `vsa alert {status,test,check
+--dry-run}` for ops. Runbook: `docs/runbooks/alerting.md`. To silence a known
+cosmetic-unhealthy container, add its name to `VSA_ALERT_IGNORE_CONTAINERS`.
+
 **WIP not in repo yet:** none from this session. The DNS-01 enablement on vps-02
 is config-only (`cloudflare.ini` + `stacks/reverse-proxy/.env`, both gitignored)
-— not committed by design.
+— not committed by design. `/etc/vsa/alert.env` (SMTP password) is likewise
+host-only, never committed.
 
 ---
 
@@ -169,10 +184,13 @@ is config-only (`cloudflare.ini` + `stacks/reverse-proxy/.env`, both gitignored)
   override as of `fd0455f` (previously it silently dropped it).
 - All three VPS run `vsa-agent.timer` (every 30s, oneshot, root) with
   `PYTHONDONTWRITEBYTECODE=1`.
-- The hub also runs `vsa-drift.timer` (daily 08:00) and
-  `vsa-fleet-cert-health.timer` (weekly Mon 09:00). Output → journalctl
-  → Promtail → central Loki. Active alerts not wired yet — failure shows
-  in `systemctl status` only. To activate: see `docs/runbooks/fleet_health_timers.md`.
+- The hub also runs `vsa-drift.timer` (daily 08:00),
+  `vsa-fleet-cert-health.timer` (weekly Mon 09:00), and **`vsa-alert.timer`
+  (every 15 min)** which emails alarms on change (see the alerting section in
+  the top session + `docs/runbooks/alerting.md`). Output → journalctl →
+  Promtail → central Loki. **Active email alerts are now wired** via
+  `vsa alert`; the drift/cert-health timers still only surface in
+  `systemctl status` / journal.
 
 **Active state of the registry (post-cleanup):**
 

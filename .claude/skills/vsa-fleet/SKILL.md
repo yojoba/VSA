@@ -59,6 +59,11 @@ vsa vps remove vps-04 [-y]
 # Agent (run on each VPS)
 vsa agent register --hub-url https://dashboard.flowbiz.ai/api --token <T>
 vsa agent start                      # one-shot, normally fired by systemd timer
+
+# Alerting (hub only — emails on cert + system problems, every 15 min)
+vsa alert status                     # current problems, no email
+vsa alert check [--force|--dry-run]  # the vsa-alert.timer job; emails on change
+vsa alert test                       # send a test email to verify SMTP
 ```
 
 ## Critical conventions
@@ -202,6 +207,7 @@ infra/scripts/setup_observability_agent.sh
 | Why was X built that way? | `docs/ADRs/00X-*.md` (especially ADR-005 for multi-VPS) |
 | How do I SSH/operate the fleet? | `docs/runbooks/fleet_access.md` |
 | How do I add a new VPS to log shipping? | `docs/runbooks/observability_agent.md` |
+| How do email alarms work / how to configure? | `docs/runbooks/alerting.md` (config: `/etc/vsa/alert.env`) |
 | What's the latest state, footguns, WIP? | `CLAUDE.md` "Latest Session" section (top) |
 | What does `vsa <command>` do? | `apps/vps-admin-cli/src/vsa/commands/<command>.py` |
 | What does `/api/<endpoint>` do? | `apps/vps-admin-api/src/vsa_api/routers/<endpoint>.py` |
