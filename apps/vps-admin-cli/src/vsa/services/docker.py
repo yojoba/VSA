@@ -22,29 +22,77 @@ def _run(cmd: list[str], *, check: bool = True, capture: bool = True) -> subproc
         ) from exc
 
 
+def _read_compose_file_env(env_file: Path) -> list[str] | None:
+    """Return the COMPOSE_FILE entries from a stack ``.env``, or None if unset.
+
+    Mirrors docker compose's own COMPOSE_FILE parsing: entries are separated by
+    ``:`` (or ``;``), the same default COMPOSE_PATH_SEPARATOR docker uses.
+    """
+    try:
+        lines = env_file.read_text().splitlines()
+    except OSError:
+        return None
+    for raw in lines:
+        line = raw.strip()
+        if line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        if key.strip() != "COMPOSE_FILE":
+            continue
+        value = value.strip().strip('"').strip("'")
+        if not value:
+            return None
+        sep = ";" if ";" in value else ":"
+        parts = [p.strip() for p in value.split(sep) if p.strip()]
+        return parts or None
+    return None
+
+
+def _compose_args(compose_file: Path) -> list[str]:
+    """Build the ``-f`` flags for a ``docker compose`` invocation.
+
+    Passing ``-f`` explicitly makes docker compose ignore the ``COMPOSE_FILE``
+    env var, which silently drops overrides like ``compose.dns-cloudflare.yml``.
+    So we read the stack's ``.env`` ourselves: if it sets ``COMPOSE_FILE``, we
+    expand it into multiple ``-f`` flags (resolved relative to the stack dir);
+    otherwise we fall back to the single compose file passed in.
+    """
+    stack_dir = compose_file.parent
+    env_file = stack_dir / ".env"
+    if env_file.is_file():
+        override = _read_compose_file_env(env_file)
+        if override:
+            args: list[str] = []
+            for part in override:
+                p = Path(part)
+                args += ["-f", str(p if p.is_absolute() else stack_dir / p)]
+            return args
+    return ["-f", str(compose_file)]
+
+
 def compose_up(compose_file: Path) -> None:
-    _run(["docker", "compose", "-f", str(compose_file), "up", "-d", "--build"])
+    _run(["docker", "compose", *_compose_args(compose_file), "up", "-d", "--build"])
 
 
 def compose_down(compose_file: Path) -> None:
-    _run(["docker", "compose", "-f", str(compose_file), "down"])
+    _run(["docker", "compose", *_compose_args(compose_file), "down"])
 
 
 def compose_logs(compose_file: Path, tail: int = 200, follow: bool = True) -> None:
-    cmd = ["docker", "compose", "-f", str(compose_file), "logs", f"--tail={tail}"]
+    cmd = ["docker", "compose", *_compose_args(compose_file), "logs", f"--tail={tail}"]
     if follow:
         cmd.append("-f")
     subprocess.run(cmd, check=False)
 
 
 def compose_ps(compose_file: Path) -> str:
-    result = _run(["docker", "compose", "-f", str(compose_file), "ps"])
+    result = _run(["docker", "compose", *_compose_args(compose_file), "ps"])
     return result.stdout
 
 
 def compose_exec(compose_file: Path, service: str, *cmd: str) -> subprocess.CompletedProcess[str]:
     return _run(
-        ["docker", "compose", "-f", str(compose_file), "exec", "-T", service, *cmd]
+        ["docker", "compose", *_compose_args(compose_file), "exec", "-T", service, *cmd]
     )
 
 
