@@ -92,11 +92,14 @@ new token with broader scope or replace the credentials file.
 > **v1** account, so `certbot renew` silently failed for months. Migrating it to
 > DNS-01 (same setup as vps-03) fixed both problems at once.
 
-> **Gotcha:** `vsa stack up reverse-proxy` will NOT pick up this override — it
-> runs `docker compose -f compose.yml …` with a single file and ignores
-> `COMPOSE_FILE`. After step 2, recreate the certbot container with
-> `docker compose up -d certbot` from
-> `~/dev/github/VSA/stacks/reverse-proxy/` (its working_dir reads `.env`).
+> **Note:** as of `fd0455f`, `vsa stack up reverse-proxy` honors this `.env`
+> `COMPOSE_FILE` override (the `docker.compose_*` helpers expand it into `-f`
+> flags), so it correctly keeps certbot on the `dns-cloudflare` image. `docker
+> compose up -d certbot` from `~/dev/github/VSA/stacks/reverse-proxy/` still
+> works as a manual equivalent. **After pulling a CLI change, reinstall with
+> `uv tool install . --reinstall --no-cache`** — plain `--force` serves a cached
+> `0.1.0` wheel and your change won't land.
+>
 > If you hit *"Another instance of Certbot is already running"*, an orphaned
 > `--dry-run` exec is holding the lock: `docker exec reverse-proxy-certbot sh -c
 > 'pkill -9 -f dry-run; rm -f /etc/letsencrypt/.certbot.lock /var/log/letsencrypt/.certbot.lock'`.

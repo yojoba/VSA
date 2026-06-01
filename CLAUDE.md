@@ -40,12 +40,13 @@ warning / 0 info**.
 
 **New footguns (don't repeat):**
 
-1. **`vsa stack up <name>` IGNORES the `COMPOSE_FILE` env var.** It resolves a
-   single `cfg.stack_dir/<name>/compose.yml` and runs `docker compose -f
-   compose.yml …`, so the `compose.dns-cloudflare.yml` override is never
-   applied. To recreate certbot with the override, run `docker compose up -d
-   certbot` directly from the stack working_dir (which reads `.env` →
-   `COMPOSE_FILE`). Candidate fix: make `vsa stack up` honor `COMPOSE_FILE`.
+1. **`vsa stack up` used to IGNORE `COMPOSE_FILE` — FIXED in `fd0455f`.** It ran
+   `docker compose -f compose.yml …`, which makes docker compose ignore the
+   `COMPOSE_FILE` env var, silently dropping the `compose.dns-cloudflare.yml`
+   override (so `vsa stack up`/`vsa site provision` reverted certbot to the
+   plain image on DNS-01 VPS). The `docker.compose_*` helpers now read the
+   stack's `.env` themselves and expand `COMPOSE_FILE` into multiple `-f` flags.
+   After pulling, **reinstall the CLI with `--no-cache`** (see footgun 5 below).
 2. **A disconnected `docker exec … certbot renew --dry-run` leaves an orphaned
    certbot process holding `/etc/letsencrypt/.certbot.lock`** → subsequent runs
    (and the 12h loop) fail with *"Another instance of Certbot is already
@@ -59,6 +60,15 @@ warning / 0 info**.
    an expiry warning** — so a cert can be days from expiry while every health
    check that only reads expiry dates still looks "valid until X". Watch the
    certbot container logs, not just expiry.
+5. **Deploying a CLI change: `uv tool install . --force` serves a CACHED wheel
+   when the version is unchanged** (still `0.1.0`) — your new code silently
+   doesn't land. Use `uv tool install . --reinstall --no-cache` (verify with
+   `grep -c <new-symbol> ~/.local/share/uv/tools/vsa-cli/.../<file>.py`).
+6. **On the hub, `__pycache__` under `~/.local/share/uv/tools/vsa-cli` is
+   root-owned** (the root agent wrote `.pyc` there before `PYTHONDONTWRITEBYTECODE=1`),
+   so a user `uv tool install` fails to remove it and leaves deps half-installed
+   (`module 'click' has no attribute 'command'`). Fix: `sudo chown -R $USER:$USER
+   ~/.local/share/uv && uv tool uninstall vsa-cli && uv tool install . --no-cache`.
 
 **WIP not in repo yet:** none from this session. The DNS-01 enablement on vps-02
 is config-only (`cloudflare.ini` + `stacks/reverse-proxy/.env`, both gitignored)
@@ -155,9 +165,8 @@ is config-only (`cloudflare.ini` + `stacks/reverse-proxy/.env`, both gitignored)
   `/srv/flowbiz/reverse-proxy/cloudflare/cloudflare.ini`, enabled by
   `COMPOSE_FILE=compose.yml:compose.dns-cloudflare.yml` in
   `stacks/reverse-proxy/.env`. Active on **vps-02 + vps-03** (vps-02 added
-  2026-06-01 — see top session). Note: `vsa stack up` does NOT apply this
-  override; recreate certbot with `docker compose up -d certbot` from the
-  stack dir.
+  2026-06-01 — see top session). `vsa stack up` honors this `COMPOSE_FILE`
+  override as of `fd0455f` (previously it silently dropped it).
 - All three VPS run `vsa-agent.timer` (every 30s, oneshot, root) with
   `PYTHONDONTWRITEBYTECODE=1`.
 - The hub also runs `vsa-drift.timer` (daily 08:00) and

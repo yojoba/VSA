@@ -159,12 +159,13 @@ infra/scripts/setup_observability_agent.sh
 
 ### Cert-renewal footguns (2026-06-01 incident)
 
-8. **`vsa stack up` IGNORES `COMPOSE_FILE`.** It runs `docker compose -f
-   compose.yml …` with a single file, so the `compose.dns-cloudflare.yml`
-   override never applies. To put certbot on the DNS-01 image, run
-   `docker compose up -d certbot` from `~/dev/github/VSA/stacks/reverse-proxy/`
-   (its working_dir reads `.env` → `COMPOSE_FILE`). DNS-01 is now active on
-   **vps-02 + vps-03**.
+8. **`vsa stack up` honors `COMPOSE_FILE` as of `fd0455f`** (it used to run
+   `docker compose -f compose.yml …` and silently drop overrides like
+   `compose.dns-cloudflare.yml`, reverting certbot to the plain image). The
+   `docker.compose_*` helpers now expand the stack `.env`'s `COMPOSE_FILE` into
+   `-f` flags. DNS-01 is active on **vps-02 + vps-03**. **When deploying CLI
+   changes, reinstall with `uv tool install . --reinstall --no-cache`** — plain
+   `--force` serves a cached wheel because the version stays `0.1.0`.
 9. **Orphaned `certbot --dry-run` holds `/etc/letsencrypt/.certbot.lock`** →
    *"Another instance of Certbot is already running"*. Fix: `docker exec
    reverse-proxy-certbot sh -c 'pkill -9 -f dry-run; rm -f
@@ -177,9 +178,9 @@ infra/scripts/setup_observability_agent.sh
 ## Don't
 
 - Don't run `docker compose up` directly inside a stack dir — always
-  `vsa stack up <name>` so the audit log fires. **Exception:** applying a
-  `COMPOSE_FILE` override (e.g. `compose.dns-cloudflare.yml`), which
-  `vsa stack up` can't do — then `docker compose up -d <service>` is correct.
+  `vsa stack up <name>` so the audit log fires. (As of `fd0455f` it honors the
+  `.env` `COMPOSE_FILE` override too, so there's no longer a reason to bypass it
+  for DNS-01.)
 - Don't hand-edit live nginx vhosts under `/srv/flowbiz/reverse-proxy/nginx/conf.d/`
   unless you also update the corresponding template/registry — `vsa vhost sync`
   will overwrite your hand-edits.
