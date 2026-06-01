@@ -49,7 +49,9 @@ VSA is now fully fleet-aware on both read and write sides:
 - **Orchestrator** `vsa fleet site-provision --domain X --primary Y --standbys Z[,W] --container c --port p` runs HTTP-01 on primary then `--standby` (DNS-01) on each standby, then writes the assignment row.
 - **`vsa site provision --standby`** flag: skip container network attach + use `--challenge dns-cloudflare` + skip HTTP-only intermediate vhost.
 
-Hub-side ops require `VSA_HUB_URL` + `VSA_HUB_AUTH=admin:<pass>` in `/etc/vsa/agent.env`. DNS-01 issuance requires the per-VPS `compose.dns-cloudflare.yml` override active + `cloudflare.ini` (mode 0600) at `/srv/flowbiz/reverse-proxy/cloudflare/`.
+Hub-side ops require `VSA_HUB_URL` + `VSA_HUB_AUTH=admin:<pass>` in `/etc/vsa/agent.env`. DNS-01 issuance requires the per-VPS `compose.dns-cloudflare.yml` override active + `cloudflare.ini` (mode 0600) at `/srv/flowbiz/reverse-proxy/cloudflare/`. **DNS-01 active on vps-02 + vps-03** (vps-02 migrated 2026-06-01 after a dead ACME-v1 account silently broke webroot renewal).
+
+**Cert renewal gotchas:** `vsa stack up` ignores `COMPOSE_FILE` (single `-f compose.yml`), so it can't apply the DNS-01 override — recreate certbot with `docker compose up -d certbot` from the stack dir. A disconnected `certbot --dry-run` leaves a lock (`/etc/letsencrypt/.certbot.lock`) → "Another instance running"; `pkill -9 -f dry-run` + `rm` the lock. `certbot renew --dry-run` is the only honest auto-renewal test (expiry-only checks miss dead accounts / orphan-cert-without-vhost failures).
 
 **Fleet health timers (active on hub):**
 - `vsa-drift.timer` — daily 08:00, runs `vsa fleet drift`

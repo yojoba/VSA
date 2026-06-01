@@ -2,6 +2,70 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Latest Session — 2026-06-01 (cert auto-renewal incident: vps-02 → DNS-01)
+
+> **Resume context.** This session fixed a **silent prod cert-renewal outage**
+> and verified auto-renewal fleet-wide. **Read this before touching:** the
+> reverse-proxy certbot setup on any VPS, `services/certbot.py`, the
+> `compose.dns-cloudflare.yml` override, or `vsa stack up`.
+
+**What happened.** The dashboard Fleet Health page showed 4 critical
+`cert-expiring-soon` findings. Root causes were two *different* problems:
+
+- **vps-02 (LokalFlash prod)** — `certbot renew` had been failing every 12h
+  since March with *"Account at .../acme-**v01**.../... does not exist"*: the
+  `.ch` renewal confs referenced a **dead ACME v1 account**. The prod certs had
+  silently reached **J-8**. (The standby vps-03 was fine — already on DNS-01.)
+  **Fix:** migrated vps-02 to **DNS-01** (mirroring vps-03): copied the CF token
+  to `cloudflare.ini`, set the `COMPOSE_FILE` override, recreated *only* the
+  certbot container, reissued `lokalflash.ch`(+www) and `app.lokalflash.ch`
+  (`--no-www`) via `vsa cert issue --challenge dns-cloudflare`. Valid to Aug 30,
+  fresh ACME v2 account, `--dry-run` confirms sustained renewal.
+- **vps-01 (hub)** — stale orphan certs whose domains no longer resolve there:
+  `lokalflash.com`/`www`/`app.lokalflash.com` (**no DNS at all** — decommissioned),
+  `app.lokalflash.ch` (migration orphan; real cert lives on vps-02/03), and
+  `electroziles.flowbiz.ai` (orphan cert with **no vhost** → HTTP-01 challenge
+  hit the default server and failed). All removed via
+  `vsa site unprovision … --keep-container -y` (the LokalFlash `lokalflash.com`
+  vhost shared `lokalflash-website` with the live **dev** env — footgun #4 — so
+  `--keep-container` was mandatory). `lokalflash.com` assignment removed from the
+  registry too (`vsa fleet remove lokalflash.com -y`).
+
+**Verification.** `certbot renew --dry-run` on all 3 VPS: vps-01 **18/18**
+(HTTP-01 webroot), vps-02 **2/2** (DNS-01), vps-03 **2/2** (DNS-01) — every
+active cert confirmed auto-renewable. `vsa fleet drift` = **0 critical / 0
+warning / 0 info**.
+
+**DNS-01 is now active on vps-02 + vps-03** (was vps-03 only).
+
+**New footguns (don't repeat):**
+
+1. **`vsa stack up <name>` IGNORES the `COMPOSE_FILE` env var.** It resolves a
+   single `cfg.stack_dir/<name>/compose.yml` and runs `docker compose -f
+   compose.yml …`, so the `compose.dns-cloudflare.yml` override is never
+   applied. To recreate certbot with the override, run `docker compose up -d
+   certbot` directly from the stack working_dir (which reads `.env` →
+   `COMPOSE_FILE`). Candidate fix: make `vsa stack up` honor `COMPOSE_FILE`.
+2. **A disconnected `docker exec … certbot renew --dry-run` leaves an orphaned
+   certbot process holding `/etc/letsencrypt/.certbot.lock`** → subsequent runs
+   (and the 12h loop) fail with *"Another instance of Certbot is already
+   running"*. Fix: `pkill -9 -f dry-run` inside the container + `rm -f
+   /etc/letsencrypt/.certbot.lock /var/log/letsencrypt/.certbot.lock`.
+3. **An orphan cert with no vhost silently fails HTTP-01 renewal** (challenge
+   falls through to the default server). `certbot renew --dry-run` is the only
+   reliable way to surface these before they expire — `cert status`/days-left
+   won't tell you the *renewal path* is broken.
+4. **`certbot renew` reports the dead-v1-account error as a renewal failure, not
+   an expiry warning** — so a cert can be days from expiry while every health
+   check that only reads expiry dates still looks "valid until X". Watch the
+   certbot container logs, not just expiry.
+
+**WIP not in repo yet:** none from this session. The DNS-01 enablement on vps-02
+is config-only (`cloudflare.ini` + `stacks/reverse-proxy/.env`, both gitignored)
+— not committed by design.
+
+---
+
 ## Latest Session — 2026-05-04 (Phase A→E: full multi-VPS write-side)
 
 > **Resume context.** A second session on 2026-05-04 took VSA from "mono-VPS
@@ -90,7 +154,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - DNS-01 setup: per-VPS `cloudflare.ini` (mode 0600) at
   `/srv/flowbiz/reverse-proxy/cloudflare/cloudflare.ini`, enabled by
   `COMPOSE_FILE=compose.yml:compose.dns-cloudflare.yml` in
-  `stacks/reverse-proxy/.env`. Currently active on vps-03 only.
+  `stacks/reverse-proxy/.env`. Active on **vps-02 + vps-03** (vps-02 added
+  2026-06-01 — see top session). Note: `vsa stack up` does NOT apply this
+  override; recreate certbot with `docker compose up -d certbot` from the
+  stack dir.
 - All three VPS run `vsa-agent.timer` (every 30s, oneshot, root) with
   `PYTHONDONTWRITEBYTECODE=1`.
 - The hub also runs `vsa-drift.timer` (daily 08:00) and

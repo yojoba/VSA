@@ -157,10 +157,29 @@ infra/scripts/setup_observability_agent.sh
    commit `263c53f` to use `${SUDO_USER:-$USER}`. If you see this on an old
    VPS: `sudo usermod -aG docker <real-user>`.
 
+### Cert-renewal footguns (2026-06-01 incident)
+
+8. **`vsa stack up` IGNORES `COMPOSE_FILE`.** It runs `docker compose -f
+   compose.yml …` with a single file, so the `compose.dns-cloudflare.yml`
+   override never applies. To put certbot on the DNS-01 image, run
+   `docker compose up -d certbot` from `~/dev/github/VSA/stacks/reverse-proxy/`
+   (its working_dir reads `.env` → `COMPOSE_FILE`). DNS-01 is now active on
+   **vps-02 + vps-03**.
+9. **Orphaned `certbot --dry-run` holds `/etc/letsencrypt/.certbot.lock`** →
+   *"Another instance of Certbot is already running"*. Fix: `docker exec
+   reverse-proxy-certbot sh -c 'pkill -9 -f dry-run; rm -f
+   /etc/letsencrypt/.certbot.lock /var/log/letsencrypt/.certbot.lock'`.
+10. **Expiry-only health checks lie about renewal.** A dead ACME account or an
+    orphan cert with no vhost makes `certbot renew` fail while the cert still
+    reads "valid until X". **`certbot renew --dry-run` is the only honest test**
+    — it runs the real challenge per cert. Run it fleet-wide when in doubt.
+
 ## Don't
 
 - Don't run `docker compose up` directly inside a stack dir — always
-  `vsa stack up <name>` so the audit log fires.
+  `vsa stack up <name>` so the audit log fires. **Exception:** applying a
+  `COMPOSE_FILE` override (e.g. `compose.dns-cloudflare.yml`), which
+  `vsa stack up` can't do — then `docker compose up -d <service>` is correct.
 - Don't hand-edit live nginx vhosts under `/srv/flowbiz/reverse-proxy/nginx/conf.d/`
   unless you also update the corresponding template/registry — `vsa vhost sync`
   will overwrite your hand-edits.
