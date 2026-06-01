@@ -1,0 +1,15 @@
+[Unit]
+Description=VSA Alerting Timer — fire vsa-alert.service every 15 minutes
+Requires=vsa-alert.service
+
+[Timer]
+# Every 15 minutes. The check only EMAILS when the set of active problems
+# changes (see `vsa alert check`), so this cadence is cheap and quiet —
+# it just bounds how fast a new cert/agent/container problem is noticed.
+OnCalendar=*:0/15
+Persistent=true
+RandomizedDelaySec=60
+Unit=vsa-alert.service
+
+[Install]
+WantedBy=timers.target

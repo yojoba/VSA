@@ -105,6 +105,24 @@ def fleet_drift() -> dict[str, Any]:
         return resp.json()
 
 
+def list_vps() -> list[dict[str, Any]]:
+    """GET /vps — registered VPS nodes (id, hostname, status, last_seen)."""
+    with _client() as client:
+        resp = client.get("/vps")
+        _check(resp)
+        data = resp.json()
+        return data if isinstance(data, list) else data.get("items", [])
+
+
+def list_containers() -> list[dict[str, Any]]:
+    """GET /containers — latest agent-synced container snapshots."""
+    with _client() as client:
+        resp = client.get("/containers")
+        _check(resp)
+        data = resp.json()
+        return data if isinstance(data, list) else data.get("items", [])
+
+
 # ---------------------------------------------------------------------------
 # Hub→agent execution channel (Phase C)
 # ---------------------------------------------------------------------------

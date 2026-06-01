@@ -1,0 +1,22 @@
+[Unit]
+Description=VSA Alerting — email alarms for cert + system problems
+After=network-online.target docker.service vsa-agent.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/vsa alert check
+# agent.env provides VSA_HUB_URL + VSA_HUB_AUTH; alert.env provides the SMTP
+# creds + recipients (VSA_ALERT_*). Both are read; later files win.
+EnvironmentFile=/etc/vsa/agent.env
+EnvironmentFile=/etc/vsa/alert.env
+User=root
+StandardOutput=journal
+StandardError=journal
+# `vsa alert check` exits 1 when critical problems are active. We treat that as
+# success for the unit (the alert email IS the signal) so the timer keeps firing
+# and no OnFailure loop triggers.
+SuccessExitStatus=0 1
+
+[Install]
+WantedBy=multi-user.target

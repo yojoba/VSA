@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import typer
 
-from vsa.commands import agent, auth, bootstrap, cert, fleet, site, stack, vhost, vps
+from vsa.commands import agent, alert, auth, bootstrap, cert, fleet, site, stack, vhost, vps
 
 app = typer.Typer(
     name="vsa",
@@ -20,6 +20,7 @@ app.add_typer(vhost.app, name="vhost", help="NGINX vhost management.")
 app.add_typer(agent.app, name="agent", help="Multi-VPS agent management.")
 app.add_typer(vps.app, name="vps", help="VPS node fleet management.")
 app.add_typer(fleet.app, name="fleet", help="Fleet-aware ops via the hub API (assignments, …).")
+app.add_typer(alert.app, name="alert", help="Email alarms for cert + system problems.")
 app.command(name="bootstrap")(bootstrap.bootstrap)
 
 if __name__ == "__main__":
