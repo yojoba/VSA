@@ -49,7 +49,7 @@ docker compose up -d certbot
 ```bash
 docker exec reverse-proxy-certbot certbot certonly --dns-cloudflare \
   --dns-cloudflare-credentials /cf/cloudflare.ini \
-  --dns-cloudflare-propagation-seconds 30 \
+  --dns-cloudflare-propagation-seconds 60 \   # 30 flakes for apex+www (2 TXT records)
   --email alexandre@netcool.ch --agree-tos --no-eff-email \
   -d <domain>            # add `-d www.<domain>` for the apex if needed
 ```

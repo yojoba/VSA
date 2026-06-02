@@ -179,6 +179,17 @@ infra/scripts/setup_observability_agent.sh
     orphan cert with no vhost makes `certbot renew` fail while the cert still
     reads "valid until X". **`certbot renew --dry-run` is the only honest test**
     — it runs the real challenge per cert. Run it fleet-wide when in doubt.
+11. **DNS-01 propagation 30s flakes for apex+www (2026-06-02).** A 2-name cert
+    (`apex` + `www`) needs two `_acme-challenge` TXT records to propagate; 30s
+    isn't always enough and `certbot renew --dry-run` fails with *"failed to
+    verify the DNS TXT records … try increasing
+    --dns-cloudflare-propagation-seconds"*. **Default is now 60** (`issue_cert`
+    + `vsa cert issue --propagation-seconds`, commit `3580eb5`). Live
+    `renewal/*.conf` on vps-02/03 already bumped to 60.
+12. **A *batched* `certbot renew --dry-run` can false-fail with `authorization
+    must be pending` / malformed** on a couple of certs (authz reused across the
+    18-cert batch). NOT a real failure — re-run the suspects with
+    `--cert-name <dom> --dry-run` (fresh authz) to confirm.
 
 ## Don't
 

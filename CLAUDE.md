@@ -2,6 +2,51 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Latest Session — 2026-06-02 → 06-03 (DNS-01 propagation fix; renewal verified healthy)
+
+> **Resume context.** Triggered by cert-expiring email alarms. Outcome: the
+> auto-renewal is **working** — the alarms were nominal (certs crossed the 30d
+> warning threshold, certbot renewed them, recovery email sent). A fleet-wide
+> `certbot renew --dry-run` then surfaced one real latent issue (below) and a
+> benign artifact. **Read before touching:** `services/certbot.py`,
+> `commands/cert.py`, or any DNS-01 `renewal/*.conf`.
+
+**What happened.** On 2026-06-02 the hub emailed 7 `cert-expiring-soon` warnings
+(`dify`, `flowbiz.ai`, `grafana`, `handsome`, `n8n`, `portfoliomanager`,
+`raphaelpittier.com` — all vps-01 HTTP-01 webroot). They crossed the 30-day
+threshold (= exactly when LE allows renewal); certbot's 12h loop renewed all 7
+(valid to Aug 31) and `vsa alert` emailed "7 resolved" at 20:00. **Not a
+failure** — the system working as designed. The `All renewals failed …
+lokalflash.com` lines in `docker logs --tail` are **stale history** (container
+up 3 months) from before the 2026-06-01 orphan cleanup; those 3 certs are gone
+from disk + the container.
+
+**Real finding (fixed): DNS-01 propagation 30s too low for apex+www.** A
+fleet-wide `--dry-run` found `lokalflash.ch`+www **failing on vps-02** (*"failed
+to verify the DNS TXT records … try increasing
+--dns-cloudflare-propagation-seconds (currently 30 seconds)"*) while single-name
+`app.lokalflash.ch` passed and vps-03 passed both — 30s flakes once two
+`_acme-challenge` TXT records must propagate.
+- **Host fix:** bumped `dns_cloudflare_propagation_seconds = 30 → 60` in the live
+  `renewal/{lokalflash.ch,app.lokalflash.ch}.conf` on **vps-02 + vps-03**;
+  targeted re-dry-run then passed.
+- **Code fix (`3580eb5`, pushed + deployed to all 3 VPS):** `issue_cert`'s
+  default `propagation_seconds` is now **60** (covers `cert.py`, `site.py`
+  provision/`--standby`, `fleet site-provision`) and `vsa cert issue` gained
+  `--propagation-seconds`, so a reissue no longer reverts the conf to 30s.
+
+**Benign artifact (no action):** a *batched* `certbot renew --dry-run` (18 certs)
+false-failed `loki.flowbiz.ai` + `jobprospectai.flowbiz.ai` with `authorization
+must be pending` (authz reuse across the batch). Targeted `--cert-name X
+--dry-run` on each succeeded. Their port-80 vhosts serve
+`/.well-known/acme-challenge/` fine; the IP allow-list is only on the 443 block.
+
+**Final state:** all 3 VPS on commit `3580eb5`; `certbot renew --dry-run` green
+fleet-wide; `vsa fleet drift` = 0/0/0; no orphaned certbot locks. Only the 2
+known cosmetic-unhealthy containers remain (jobprospectai, lokalflash-website).
+**WIP not in repo:** none — the host `renewal/*.conf` edits are gitignored by
+design.
+
 ## Latest Session — 2026-06-01 (cert auto-renewal incident: vps-02 → DNS-01)
 
 > **Resume context.** This session fixed a **silent prod cert-renewal outage**
