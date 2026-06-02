@@ -22,7 +22,7 @@ def issue_cert(
     challenge: ChallengeType = "http-webroot",
     cf_credentials_path: Path | None = None,
     cf_override_compose: Path | None = None,
-    propagation_seconds: int = 30,
+    propagation_seconds: int = 60,
 ) -> None:
     """Issue a Let's Encrypt certificate via the requested challenge.
 
@@ -34,6 +34,11 @@ def issue_cert(
     ``certbot/dns-cloudflare`` image is used and ``/cf/cloudflare.ini`` is
     mounted. The credentials file at ``cf_credentials_path`` must exist on
     the host (the override mounts the directory containing it).
+
+    ``propagation_seconds`` defaults to 60: 30s flaked for apex+www certs
+    (2 ``_acme-challenge`` TXT records to propagate) on 2026-06-02 — the
+    issued ``renewal/<domain>.conf`` records this value, so the certbot
+    container's 12h loop reuses it on every auto-renewal.
     """
     base = ["docker", "compose", "-f", str(compose_file)]
 

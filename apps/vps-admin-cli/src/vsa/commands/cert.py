@@ -32,6 +32,16 @@ def issue(
             "for warm-standby VPS where domains DNS-resolve elsewhere."
         ),
     ),
+    propagation_seconds: int = typer.Option(
+        60,
+        "--propagation-seconds",
+        help=(
+            "DNS-01 only: seconds to wait for Cloudflare TXT propagation before "
+            "asking LE to validate. Recorded in renewal/<domain>.conf and reused "
+            "by the 12h auto-renew loop. 30s flakes for apex+www (2 records); "
+            "60 is the safe default."
+        ),
+    ),
 ) -> None:
     """Issue a Let's Encrypt certificate for a domain.
 
@@ -79,6 +89,7 @@ def issue(
             challenge=challenge,
             cf_credentials_path=cf_credentials,
             cf_override_compose=cf_override,
+            propagation_seconds=propagation_seconds,
         )
         console.print(f"[green]Certificate issued for {domain} via {challenge}[/green]")
 
