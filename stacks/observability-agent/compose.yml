@@ -1,13 +1,21 @@
-# Lightweight observability agent — Promtail only.
+# Lightweight observability agent for remote VPS that DON'T host the
+# Loki/Grafana stack.
 #
-# Deployed on remote VPS that DON'T host the Loki/Grafana stack.
-# Promtail scrapes local Docker containers + nginx domain access logs
-# and ships them to the central Loki instance over HTTPS+basic-auth.
+#  - Promtail ships local container + nginx logs to the central Loki.
+#  - node-exporter + cAdvisor expose host + container metrics locally.
+#  - prometheus-agent (agent mode) scrapes those two and remote-writes to the
+#    hub's Prometheus through the SAME loki.flowbiz.ai ingress (reuses its cert,
+#    IP allow-list and basic auth — path /prom/api/v1/write). No new public
+#    endpoint, DNS record or cert is needed on the remote VPS.
 #
 # Required env (see .env.example):
 #   VSA_VPS_ID, LOKI_URL, LOKI_BASIC_AUTH_USER, LOKI_BASIC_AUTH_PASSWORD
 #
-# Promtail expands ${VAR} from the environment at boot via -config.expand-env=true.
+# Promtail expands ${VAR} via -config.expand-env=true; prometheus-agent expands
+# ${VSA_VPS_ID} in external_labels via --enable-feature=expand-external-labels.
+# The remote-write basic-auth password is mounted as a file (secrets/, host-only,
+# rendered from .env at deploy — see README), since Prometheus can't read it
+# from an env var.
 
 services:
   promtail:
@@ -38,9 +46,65 @@ services:
     # restart policy + the agent's own connectivity to Loki are the
     # health signals we rely on.
 
+  node-exporter:
+    image: prom/node-exporter:v1.8.1
+    container_name: observability-agent-node-exporter
+    restart: unless-stopped
+    command:
+      - --path.rootfs=/host/rootfs
+      - --path.procfs=/host/proc
+      - --path.sysfs=/host/sys
+      - --collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)
+    volumes:
+      - /:/host/rootfs:ro
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+    networks:
+      - metrics-net
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    container_name: observability-agent-cadvisor
+    restart: unless-stopped
+    privileged: true
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+    networks:
+      - metrics-net
+
+  prometheus-agent:
+    image: prom/prometheus:v2.53.0
+    container_name: observability-agent-prometheus
+    restart: unless-stopped
+    env_file:
+      - ./.env
+    command:
+      # Agent mode = scrape + remote_write only (WAL, no local TSDB/queries) —
+      # tiny footprint. expand-external-labels lets ${VSA_VPS_ID} resolve from env.
+      - --config.file=/etc/prometheus/prometheus-agent.yml
+      - --enable-feature=agent
+      - --enable-feature=expand-external-labels
+      - --storage.agent.path=/prometheus
+    volumes:
+      - ./prometheus-agent.yml:/etc/prometheus/prometheus-agent.yml:ro
+      # Host-only secret (mode 600, gitignored), rendered from .env at deploy.
+      - ./secrets/remote_write_password:/etc/prometheus/secrets/remote_write_password:ro
+      - prometheus-agent-data:/prometheus
+    networks:
+      - metrics-net
+    depends_on:
+      - node-exporter
+      - cadvisor
+
 volumes:
   promtail-data:
+  prometheus-agent-data:
 
 networks:
   flowbiz_ext:
     external: true
+  metrics-net:
+    driver: bridge

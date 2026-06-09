@@ -46,4 +46,8 @@ SECRETS.local.md
 *.local.md
 secrets.local.*
 
+# Host-only rendered secrets (e.g. observability-agent remote-write password,
+# rendered from .env at deploy). Never commit.
+**/secrets/
+
 

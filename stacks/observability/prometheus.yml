@@ -22,13 +22,20 @@ scrape_configs:
     static_configs:
       - targets: ['promtail:9080']
 
+  # Host + container metrics for the hub itself. Stamp vps_id=vps-01 so these
+  # sit alongside the remote-write metrics pushed by vps-02/03 (which carry
+  # vps_id via the agent's external_labels) and share one dashboard filter.
   - job_name: node-exporter
     static_configs:
       - targets: ['node-exporter:9100']
+        labels:
+          vps_id: vps-01
 
   - job_name: cadvisor
     static_configs:
       - targets: ['cadvisor:8080']
+        labels:
+          vps_id: vps-01
 
   # Example scrape config for application metrics (uncomment and adjust)
   # - job_name: reverse-proxy

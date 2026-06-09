@@ -64,6 +64,9 @@ services:
       - --storage.tsdb.retention.size=1GB
       - --web.external-url=https://${PROMETHEUS_DOMAIN:-prometheus.flowbiz.ai}
       - --web.route-prefix=/
+      # Accept Prometheus remote-write from remote-VPS agents (vps-02/03),
+      # proxied in via the loki.flowbiz.ai vhost (/prom/api/v1/write).
+      - --web.enable-remote-write-receiver
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus-data:/prometheus
@@ -71,6 +74,9 @@ services:
       - "${PROMETHEUS_HTTP_PORT:-9090}:9090"
     networks:
       - observability_internal
+      # Joined so the reverse-proxy nginx (flowbiz_ext only) can reach the
+      # remote-write receiver — mirrors how loki is exposed.
+      - flowbiz_ext
 
   node-exporter:
     image: prom/node-exporter:v1.8.1

@@ -1,0 +1,31 @@
+# Prometheus in AGENT mode for a remote VPS — scrapes the local node-exporter
+# and cAdvisor and remote-writes everything to the hub's Prometheus, tunnelled
+# through the loki.flowbiz.ai ingress (reuses its TLS cert, IP allow-list and
+# basic auth). See compose.yml for the feature flags that make this work.
+#
+#  - ${VSA_VPS_ID} is expanded from the container env at boot
+#    (--enable-feature=expand-external-labels). It stamps every series so the
+#    Grafana "VPS" filter and the hub's own vps_id=vps-01 metrics line up.
+#  - The basic-auth username (promtail) matches the hub's loki htpasswd. The
+#    password is read from a mounted file (rendered from .env at deploy) because
+#    Prometheus cannot expand env vars outside external_labels.
+
+global:
+  scrape_interval: 30s
+  external_labels:
+    vps_id: ${VSA_VPS_ID}
+
+scrape_configs:
+  - job_name: node-exporter
+    static_configs:
+      - targets: ['node-exporter:9100']
+
+  - job_name: cadvisor
+    static_configs:
+      - targets: ['cadvisor:8080']
+
+remote_write:
+  - url: https://loki.flowbiz.ai/prom/api/v1/write
+    basic_auth:
+      username: promtail
+      password_file: /etc/prometheus/secrets/remote_write_password
