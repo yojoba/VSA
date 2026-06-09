@@ -106,8 +106,9 @@ the generator and regenerate:
 cd stacks/observability/grafana
 python3 build_fleet_dashboard.py > dashboards/fleet-overview.json   # regenerate
 
-# Deploy / update in Grafana (admin creds from the observability .env):
-G="http://admin:<pass>@localhost:3011"   # NB: live host port is 3011, see below
+# Deploy / update in Grafana (admin creds = GRAFANA_ADMIN_USER/PASSWORD from
+# the observability .env — currently info@flowbiz.ai):
+G="http://<GRAFANA_ADMIN_USER>:<pass>@localhost:3011"   # NB: live host port is 3011, see below
 python3 -c "import json;d=json.load(open('dashboards/fleet-overview.json'));\
 print(json.dumps({'dashboard':d,'overwrite':True}))" \
   | curl -s -X POST "$G/api/dashboards/db" -H 'Content-Type: application/json' --data @-
