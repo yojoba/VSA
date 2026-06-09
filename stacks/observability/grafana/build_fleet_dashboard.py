@@ -259,9 +259,13 @@ panels.append(timeseries("Memory used % per VPS", [prom_target(
 panels.append(timeseries("Disk free per mount", [prom_target(
     'node_filesystem_avail_bytes{fstype="ext4",vps_id=~"$vps"}', "{{vps_id}} {{mountpoint}}")],
     gp(0, 13, 8, 8), unit="bytes"))
-panels.append(timeseries("Network I/O (ens3)", [
-    prom_target('rate(node_network_receive_bytes_total{device="ens3",vps_id=~"$vps"}[5m])', "{{vps_id}} rx"),
-    prom_target('-rate(node_network_transmit_bytes_total{device="ens3",vps_id=~"$vps"}[5m])', "{{vps_id}} tx"),
+# Container network I/O (cAdvisor), summed per VPS. node-exporter runs in a
+# bridge netns so its node_network_* metrics only see the container's eth0, not
+# the host NIC — so we use cAdvisor's per-container counters, which are accurate
+# and need no host-network mode (which would expose :9100 publicly on remotes).
+panels.append(timeseries("Container network I/O", [
+    prom_target('sum by (vps_id) (rate(container_network_receive_bytes_total{vps_id=~"$vps"}[5m]))', "{{vps_id}} rx"),
+    prom_target('-sum by (vps_id) (rate(container_network_transmit_bytes_total{vps_id=~"$vps"}[5m]))', "{{vps_id}} tx"),
 ], gp(8, 13, 8, 8), unit="Bps"))
 panels.append(timeseries("Load (1m) per VPS", [
     prom_target('node_load1{vps_id=~"$vps"}', "{{vps_id}}"),

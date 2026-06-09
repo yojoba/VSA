@@ -705,7 +705,7 @@
     {
       "id": 12,
       "type": "timeseries",
-      "title": "Network I/O (ens3)",
+      "title": "Container network I/O",
       "gridPos": {
         "x": 8,
         "y": 13,
@@ -718,7 +718,7 @@
             "type": "prometheus",
             "uid": "vsa-prometheus"
           },
-          "expr": "rate(node_network_receive_bytes_total{device=\"ens3\",vps_id=~\"$vps\"}[5m])",
+          "expr": "sum by (vps_id) (rate(container_network_receive_bytes_total{vps_id=~\"$vps\"}[5m]))",
           "legendFormat": "{{vps_id}} rx",
           "instant": false,
           "range": true,
@@ -729,7 +729,7 @@
             "type": "prometheus",
             "uid": "vsa-prometheus"
           },
-          "expr": "-rate(node_network_transmit_bytes_total{device=\"ens3\",vps_id=~\"$vps\"}[5m])",
+          "expr": "-sum by (vps_id) (rate(container_network_transmit_bytes_total{vps_id=~\"$vps\"}[5m]))",
           "legendFormat": "{{vps_id}} tx",
           "instant": false,
           "range": true,
