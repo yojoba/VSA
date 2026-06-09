@@ -80,12 +80,21 @@ Two datasources are configured in Grafana (created via the API, stored in the
 | Name | Type | URL | uid | Scope |
 |---|---|---|---|---|
 | Loki | loki | `http://loki:3100` | `ffl21vk4eobuoe` | logs from **all 3 VPS** (nginx access/error, journald, vsa-audit) |
-| Prometheus | prometheus | `http://prometheus:9090` | `vsa-prometheus` | metrics from **vps-01 only** (node-exporter host + cAdvisor containers) |
+| Prometheus | prometheus | `http://prometheus:9090` | `vsa-prometheus` | metrics from **all 3 VPS** (node-exporter host + cAdvisor containers) |
 
-> Remote VPS (vps-02/03) ship **logs** to the hub's Loki via `loki.flowbiz.ai`
-> but do **not** export metrics to Prometheus — so host/container metric panels
-> are hub-scoped, while traffic/log panels are fleet-wide (filter with the `VPS`
-> dashboard variable).
+> **Fleet-wide metrics (push model).** The hub scrapes its own node-exporter +
+> cAdvisor (stamped `vps_id=vps-01` in `prometheus.yml`). Remote VPS (vps-02/03)
+> run the `observability-agent` stack's `prometheus-agent` (agent mode), which
+> scrapes their local exporters and **remote-writes** to this Prometheus,
+> stamping `vps_id` via `external_labels`. The write path tunnels through the
+> `loki.flowbiz.ai` vhost (`/prom/api/v1/write`), reusing its TLS cert, IP
+> allow-list and basic auth. Enabled by `--web.enable-remote-write-receiver`
+> and Prometheus joining `flowbiz_ext`. Both logs and metrics are now
+> fleet-wide; filter any panel with the `VPS` dashboard variable.
+>
+> To onboard a new VPS's metrics: add its public IP to the `loki.flowbiz.ai`
+> vhost allow-list, then deploy the `observability-agent` stack there (see that
+> stack's README — including the remote-write password secret step).
 
 ### VSA — Fleet Overview dashboard
 

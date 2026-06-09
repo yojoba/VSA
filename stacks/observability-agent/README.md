@@ -1,13 +1,17 @@
 # observability-agent
 
-Lightweight Promtail-only stack for **remote VPS** that don't host the
-central Loki/Grafana instance. Ships logs over HTTPS+basic-auth to the
-hub's Loki at `https://loki.flowbiz.ai`.
+Lightweight stack for **remote VPS** that don't host the central
+Loki/Grafana/Prometheus instance. Ships **logs** to the hub's Loki and
+**metrics** to the hub's Prometheus, both over HTTPS+basic-auth via
+`https://loki.flowbiz.ai` (the metrics path reuses that vhost's cert,
+IP allow-list and basic auth — no extra DNS/cert is needed here).
 
-For the **hub VPS** (where Loki + Grafana + the full Promtail config
+For the **hub VPS** (where Loki + Grafana + Prometheus + the full configs
 live), use the regular `observability` stack instead.
 
 ## What it collects
+
+**Logs → Loki** (Promtail):
 
 | Source | How |
 |---|---|
@@ -17,8 +21,17 @@ live), use the regular `observability` stack instead.
 | vsa CLI audit trail | tail of `/var/log/vsa/audit.jsonl` |
 | Every Docker container on the host | `docker_sd_configs` — auto-tags `container`, `compose_project`, `compose_service`, `stream` |
 
-Every stream is also stamped with `vps_id` so the dashboard can filter
-per VPS.
+**Metrics → Prometheus** (node-exporter + cAdvisor, scraped locally by a
+`prometheus-agent` in agent mode that remote-writes to the hub):
+
+| Source | How |
+|---|---|
+| Host metrics (CPU, memory, disk, load, network) | `node-exporter` |
+| Per-container metrics (CPU, memory, network) | `cAdvisor` |
+
+Every log stream and metric series is stamped with `vps_id` (logs via
+Promtail labels, metrics via the agent's `external_labels`) so the
+dashboard can filter per VPS.
 
 ## Install (per VPS)
 
@@ -32,18 +45,30 @@ cd stacks/observability-agent
 cp .env.example .env
 $EDITOR .env       # set VSA_VPS_ID, LOKI_BASIC_AUTH_USER, LOKI_BASIC_AUTH_PASSWORD
 
-# 3. Make sure the reverse-proxy stack is logging in JSON format and
+# 3. Render the remote-write password secret (Prometheus can't read it from
+#    an env var). Host-only, gitignored, mode 644 so the container user reads it.
+mkdir -p secrets
+grep LOKI_BASIC_AUTH_PASSWORD .env | cut -d= -f2- | tr -d '\n' > secrets/remote_write_password
+chmod 644 secrets/remote_write_password
+
+# 4. Make sure the reverse-proxy stack is logging in JSON format and
 #    bind-mounting /srv/flowbiz/reverse-proxy/logs (it should be by
 #    default — see stacks/reverse-proxy/compose.yml). If not:
 vsa stack up reverse-proxy
 
-# 4. Start the agent
+# 5. Start the agent (promtail + node-exporter + cadvisor + prometheus-agent)
 vsa stack up observability-agent
 
-# 5. Verify it's pushing
-docker logs observability-agent-promtail --tail 20
-# Look for: 'Successfully sent batch' — no auth/network errors.
+# 6. Verify it's pushing
+docker logs observability-agent-promtail --tail 20    # 'Successfully sent batch'
+docker logs observability-agent-prometheus --tail 20  # 'Server is ready', no 4xx on remote_write
 ```
+
+> The hub side must be prepared once: Prometheus runs with
+> `--web.enable-remote-write-receiver` and joins `flowbiz_ext`, and the
+> `loki.flowbiz.ai` vhost has a `/prom/` location proxying to it. A new VPS
+> only needs its public IP added to that vhost's allow-list (it shares the
+> loki one). See `stacks/observability/README.md`.
 
 ## Verify on the hub
 
