@@ -117,9 +117,15 @@ Pydantic models and constants shared between CLI and API:
 |-------|----------|---------|
 | `reverse-proxy` | NGINX 1.25, Certbot, NGINX Reloader | TLS termination, routing, per-domain JSON logging, auto-renewal |
 | `dashboard` | PostgreSQL 16, FastAPI, Next.js | Management dashboard |
-| `observability` | Grafana 10.4, Loki 3.0, Promtail 3.0, Prometheus 2.53, Node Exporter, cAdvisor | Monitoring and log aggregation (named volumes on dedicated disk) |
+| `observability` | Grafana 10.4, Loki 3.0, Promtail 3.0, Prometheus 2.53, Node Exporter, cAdvisor | Monitoring and log aggregation (named volumes on dedicated disk); hub-side. Prometheus has `--web.enable-remote-write-receiver` and joins `flowbiz_ext` |
+| `observability-agent` | Promtail, Node Exporter, cAdvisor, Prometheus (agent mode) | Remote-VPS agent (vps-02/03): ships **logs** to the hub Loki and **metrics** to the hub Prometheus via remote-write |
 | `dify` | Dify platform | AI/LLM workbench |
 | `llm-gateway` | (placeholder) | LLM backend routing |
+
+The primary Grafana dashboard is **VSA — Fleet Overview** (`uid=vsa-fleet-overview`),
+generated from `stacks/observability/grafana/build_fleet_dashboard.py` and
+covering host metrics, container metrics, web traffic and logs/audit — all
+filterable per VPS.
 
 ## Data Flows
 
@@ -195,6 +201,27 @@ stored in PostgreSQL.
 
 **Merge & dedup:** The `/api/audit-logs` endpoint merges both sources, deduplicates by
 `(timestamp, actor, action, target)`, and returns paginated results sorted newest-first.
+
+### Fleet-wide Metrics (Prometheus remote-write, push model)
+
+Host + container metrics from **all** VPS land in the hub's Prometheus. The hub
+scrapes its own node-exporter/cAdvisor (stamped `vps_id=vps-01`). Remote VPS push:
+
+```
+VPS-02..N (observability-agent)                 VPS-01 (Hub)
+┌───────────────────────────────┐               ┌──────────────────────────────────┐
+│ node-exporter + cAdvisor       │   remote_     │ NGINX  loki.flowbiz.ai  /prom/    │
+│   ▲ scrape (local)             │   write       │   (TLS + IP allow-list + auth)    │
+│ prometheus-agent (agent mode) ─┼──── HTTPS ───▶│   ▼  /prom/api/v1/write           │
+│   external_labels: vps_id      │               │ Prometheus (remote-write receiver)│
+└───────────────────────────────┘               │   ▼                               │
+                                                 │ Grafana ◀── VSA Fleet Overview    │
+                                                 └──────────────────────────────────┘
+```
+
+No new public endpoint, DNS record or cert is needed on the remotes — the
+write path reuses the `loki.flowbiz.ai` vhost. `vsa alert`'s **disk** check
+reads this same Prometheus, so disk pressure on any VPS raises an email alarm.
 
 ### Multi-VPS Hub-and-Agent
 

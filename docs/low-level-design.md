@@ -54,9 +54,15 @@ Large dedicated disk (246G) — holds Docker images, container layers, and named
 --storage.tsdb.retention.size=1GB
 --web.external-url=https://prometheus.flowbiz.ai
 --web.route-prefix=/
+--web.enable-remote-write-receiver   # accept remote_write from vps-02/03 agents
 ```
 
-**Scrape targets (15s interval):**
+**Networks:** `observability_internal` **and** `flowbiz_ext` (the latter so the
+reverse-proxy nginx can reach the remote-write receiver — mirrors Loki).
+
+**Scrape targets (15s interval):** the hub's own services. `node-exporter` and
+`cadvisor` jobs are stamped `vps_id=vps-01` (static label) so they line up with
+the remote-write series from vps-02/03.
 
 | Job | Target | Port |
 |-----|--------|------|
@@ -66,6 +72,21 @@ Large dedicated disk (246G) — holds Docker images, container layers, and named
 | `promtail` | `promtail:9080` | 9080 |
 | `node-exporter` | `node-exporter:9100` | 9100 |
 | `cadvisor` | `cadvisor:8080` | 8080 |
+
+**Remote-write ingest (fleet-wide metrics):** vps-02/03 run the
+`observability-agent` stack (node-exporter + cAdvisor + `prometheus-agent` in
+`--enable-feature=agent` mode). Each agent scrapes its local exporters, stamps
+`vps_id` via `external_labels` (`--enable-feature=expand-external-labels`), and
+remote-writes to `https://loki.flowbiz.ai/prom/api/v1/write`. That vhost has a
+`location /prom/` (`rewrite ^/prom/(.*)$ /$1`) proxying to
+`observability-prometheus-1:9090`, reusing its TLS cert + IP allow-list + basic
+auth (user `promtail`). The agent reads the password from a mounted file
+(`secrets/remote_write_password`, host-only, gitignored) since Prometheus can't
+expand env vars outside `external_labels`.
+
+> **Footgun:** node-exporter runs in a bridge netns, so its `node_network_*`
+> metrics only see the container's `eth0`, never the host `ens3`. Network panels
+> use cAdvisor `container_network_*` instead.
 
 ### Loki (`grafana/loki:3.0.0`)
 
@@ -105,9 +126,23 @@ Large dedicated disk (246G) — holds Docker images, container layers, and named
 
 **Runs as:** image default user (`grafana`, UID 472)
 
-**Provisioning:** Bind-mounted from `/srv/flowbiz/observability/data/grafana-provisioning/` (datasources and dashboards configured as YAML).
+**Host port:** published on **3011** (the `.env`'s `GRAFANA_HTTP_PORT=3010` is
+stale — 3010 was already bound; the live container maps `3011:3000`). Confirm
+with `docker port observability-grafana-1`.
 
-**Data volume:** `obs-grafana-data` stores dashboards, users, alert state.
+**Admin:** `GRAFANA_ADMIN_USER`/`GRAFANA_ADMIN_PASSWORD` in
+`stacks/observability/.env` (gitignored). Currently user **`info@flowbiz.ai`**.
+
+**Datasources & dashboards:** created via the Grafana API and stored in the
+`obs-grafana-data` volume (the `grafana-provisioning` bind mount is empty — they
+are **not** YAML-provisioned). Datasource UIDs: Loki `ffl21vk4eobuoe`,
+Prometheus `vsa-prometheus`. The primary dashboard `vsa-fleet-overview` is
+generated from `stacks/observability/grafana/build_fleet_dashboard.py` (single
+source of truth, committed as `dashboards/fleet-overview.json`) and POSTed to
+`/api/dashboards/db`. **Each panel carries a panel-level `datasource`** or
+Grafana falls back to the default (Loki) and PromQL panels error to "No data".
+
+**Data volume:** `obs-grafana-data` stores dashboards, datasources, users, alert state.
 
 ## Reverse Proxy Internals
 
@@ -235,7 +270,8 @@ flowbiz_ext (shared bridge network)
 ├── reverse-proxy-nginx       (ports 80, 443)
 ├── reverse-proxy-certbot
 ├── loki                      (port 3100)
-├── grafana                   (port 3010→3000)
+├── grafana                   (host port 3011→3000)
+├── prometheus                (port 9090 — joined so nginx can proxy /prom/ remote-write)
 ├── dashboard-api
 ├── dashboard-ui
 ├── dify-*
@@ -248,6 +284,12 @@ observability_internal (isolated bridge)
 ├── prometheus                (port 9090)
 ├── node-exporter             (port 9100)
 └── cadvisor                  (port 8080)
+
+# Remote VPS (vps-02/03) — observability-agent stack
+metrics-net (isolated bridge, per remote)
+├── node-exporter
+├── cadvisor
+└── prometheus-agent          (remote-writes to the hub via loki.flowbiz.ai/prom/)
 
 dashboard-net (isolated bridge)
 ├── dashboard-api
@@ -294,7 +336,8 @@ dify-net (isolated bridge)
 | DB migrations | `apps/vps-admin-api/alembic/versions/` | Python (Alembic) |
 | System mounts | `/etc/fstab` | fstab |
 | Hub/agent env (HUB_URL, HUB_AUTH, VPS_ID) | `/etc/vsa/agent.env` | env (mode 600) |
-| Alerting config (SMTP, recipients, level) | `/etc/vsa/alert.env` | env (mode 600, gitignored) |
+| Alerting config (SMTP, recipients, level, disk thresholds) | `/etc/vsa/alert.env` | env (mode 600, gitignored) |
+| Remote-write password (per remote VPS) | `stacks/observability-agent/secrets/remote_write_password` | text (mode 644, gitignored) |
 | Alert dedup state | `/var/lib/vsa/alert-state.json` | JSON (root-owned, written by timer) |
 | DNS-01 Cloudflare token | `/srv/flowbiz/reverse-proxy/cloudflare/cloudflare.ini` | INI (mode 600) |
 | reverse-proxy compose override toggle | `stacks/reverse-proxy/.env` (`COMPOSE_FILE=`) | env (gitignored) |

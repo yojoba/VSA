@@ -60,11 +60,31 @@ vsa vps remove vps-04 [-y]
 vsa agent register --hub-url https://dashboard.flowbiz.ai/api --token <T>
 vsa agent start                      # one-shot, normally fired by systemd timer
 
-# Alerting (hub only — emails on cert + system problems, every 15 min)
+# Alerting (hub only — emails on cert + system + DISK problems, every 15 min)
 vsa alert status                     # current problems, no email
 vsa alert check [--force|--dry-run]  # the vsa-alert.timer job; emails on change
 vsa alert test                       # send a test email to verify SMTP
+# Disk alarms (added 2026-06-09) read the hub Prometheus; tune in /etc/vsa/alert.env:
+#   VSA_ALERT_DISK_WARN_PERCENT=85  VSA_ALERT_DISK_CRIT_PERCENT=92
+#   VSA_ALERT_DISK_MOUNTS=/|/var/lib/docker
 ```
+
+## Observability / metrics / Grafana (since 2026-06-09)
+
+- **Grafana** = `https://grafana.flowbiz.ai`, admin **`info@flowbiz.ai`** (pwd in
+  `stacks/observability/.env` → `GRAFANA_ADMIN_PASSWORD`, gitignored). The live
+  container publishes on host port **3011** (not the `.env`'s 3010 — 3010 was
+  taken). Datasource UIDs: Loki `ffl21vk4eobuoe`, Prometheus `vsa-prometheus`.
+- **Dashboard** `vsa-fleet-overview` is generated from
+  `stacks/observability/grafana/build_fleet_dashboard.py` — edit the generator,
+  not the JSON, then POST to `/api/dashboards/db`.
+- **Fleet-wide metrics = push.** Hub Prometheus has
+  `--web.enable-remote-write-receiver` + is on `flowbiz_ext`. vps-02/03 run
+  node-exporter + cAdvisor + a `prometheus-agent` (agent mode) in the
+  `observability-agent` stack that remote-writes via
+  `https://loki.flowbiz.ai/prom/api/v1/write` (reuses the loki vhost's cert +
+  allow-list + basic-auth). Password rendered to
+  `stacks/observability-agent/secrets/remote_write_password` per host (gitignored).
 
 ## Critical conventions
 
@@ -190,6 +210,30 @@ infra/scripts/setup_observability_agent.sh
     must be pending` / malformed** on a couple of certs (authz reused across the
     18-cert batch). NOT a real failure — re-run the suspects with
     `--cert-name <dom> --dry-run` (fresh authz) to confirm.
+
+### Observability / disk footguns (2026-06-09 session)
+
+13. **Root disk full → silent dashboard outage.** vps-01 `/` (19 GB) filled to
+    100% → the dashboard's bind-mounted Postgres (`/srv/flowbiz/dashboard/data`)
+    crash-looped (`PANIC: No space left on device`) → API 500 on every endpoint.
+    Disk fills on root (`/dev/sda1`), NOT the Docker disk (`/dev/sdb`, 246 GB) —
+    so `docker system prune` does NOT help. The weight is `~/dev/github`
+    node_modules (regenerable — apps run from Docker) + caches. `vsa alert` now
+    has a **disk** check so this won't go silent again.
+14. **node-exporter network metrics are container-scoped.** It runs in a bridge
+    netns, so `node_network_*{device="ens3"}` is empty — it only sees `eth0`.
+    Dashboards use cAdvisor `container_network_*` instead (host-mode would expose
+    `:9100` publicly on remotes).
+15. **Promtail does NOT hot-reload its config — restart it.** The hub Promtail
+    ran 3 months without picking up the `vps_id: vps-01` label added to
+    `nginx-domain-access`; `docker restart observability-promtail-1` fixed it.
+16. **Grafana port is 3011, not the `.env`'s 3010.** And curl basic-auth with an
+    `@` in the username (`info@flowbiz.ai`) breaks `http://user:pass@host` URL
+    parsing — use `curl -u 'user:pass'`.
+17. **A stray host `next dev` can shadow a containerised app.** Found a
+    `jobprospectai` Next.js dev server running on the host since March (1.2 GB
+    node_modules), while the real site was served by its container — check
+    `ps aux | grep dev/github` for orphans before assuming an app is only Dockerised.
 
 ## Don't
 

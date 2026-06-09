@@ -2,6 +2,72 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Latest Session — 2026-06-09 (disk-full outage → fleet-wide metrics + Grafana dashboard + disk alarms)
+
+> **Resume context.** Started from a broken `dashboard.flowbiz.ai/health`.
+> Root cause: **vps-01 root disk (`/dev/sda1`, 19 GB) was 100% full**, which
+> crash-looped the dashboard's bind-mounted Postgres
+> (`/srv/flowbiz/dashboard/data`, `PANIC: No space left on device`) → API 500.
+> That one incident pulled in four pieces of work, all shipped. **Read before
+> touching:** `stacks/observability*`, `services/agent_sync.py`,
+> `services/alerting.py`, the `loki.flowbiz.ai` vhost, or the Grafana setup.
+
+**What landed (commits `02c3bbe` → latest, ~12 commits):**
+
+- **Disk incident fixed.** Purged regenerable caches + `~/dev/github` node_modules
+  (apps run from Docker, not these checkouts) → root disk **100% → 65%**. Also
+  killed an orphaned **host `next dev` for jobprospectai** (running since
+  2026-03-04, 1.2 GB node_modules) — the real site is served by its *container*
+  `jobprospectai:3000`; the host process listened on nothing. `docker system
+  prune` does NOT help: Docker lives on `/dev/sdb` (246 GB), the pressure is on
+  root `/`.
+
+- **Agent heartbeat IP fix (`02c3bbe`).** `collect_heartbeat` used
+  `gethostbyname(gethostname())` → `127.0.0.1` on the hub (`/etc/hosts` maps the
+  hostname to loopback), so the dashboard showed vps-01 as `127.0.0.1`. Now uses
+  the primary egress IP (UDP-socket trick) + optional `VSA_VPS_IP` override.
+
+- **Grafana dashboard.** Added the **Prometheus** datasource (`vsa-prometheus`),
+  fixed the **Loki** datasource (its URL was empty), and built **VSA — Fleet
+  Overview** (`uid=vsa-fleet-overview`) from
+  `stacks/observability/grafana/build_fleet_dashboard.py` (single source of
+  truth — edit the generator, not the JSON). Grafana admin is now
+  **`info@flowbiz.ai`** (was `admin`/`change_me`), live host port **3011**
+  (`.env` says 3010 — stale). See [[fleet-metrics-grafana]] memory.
+
+- **Fleet-wide metrics (push model).** node-exporter/cAdvisor metrics now cover
+  all 3 VPS. Hub Prometheus got `--web.enable-remote-write-receiver` + joined
+  `flowbiz_ext`; vps-02/03 run a `prometheus-agent` (agent mode) in the
+  `observability-agent` stack that remote-writes through the **`loki.flowbiz.ai`
+  vhost's new `/prom/` location** (reuses cert + IP allow-list + basic-auth, no
+  new DNS/cert on remotes). Remote-write password is host-only at
+  `stacks/observability-agent/secrets/remote_write_password` (gitignored).
+
+- **`vsa alert` disk alarms.** New `disk` category queries the hub Prometheus
+  (`node_filesystem_*`, all VPS) and warns ≥85% / critical ≥92% per mount
+  (`VSA_ALERT_DISK_{WARN,CRIT}_PERCENT`, `VSA_ALERT_DISK_MOUNTS`). 87 CLI tests
+  pass. Runbook + `alert.env.example` updated.
+
+**New footguns (don't repeat):**
+
+1. **Root-disk-full is a silent killer** — it crash-loops the bind-mounted
+   dashboard Postgres before any expiry/health check notices. The new `vsa
+   alert` disk check is the guard; `df -h /` (not `docker system df`) is the
+   first thing to run if the dashboard 500s.
+2. **node-exporter network metrics are container-scoped** (bridge netns → only
+   `eth0`, never host `ens3`). Network panels use cAdvisor `container_network_*`.
+3. **Promtail doesn't hot-reload** — `docker restart observability-promtail-1`
+   after editing `promtail-config.yml`. The hub ran 3 months missing the
+   `vps_id` label on nginx logs because it was never restarted.
+4. **Grafana on port 3011, not 3010**, and `curl -u 'user:pass'` (not
+   `http://user:pass@host`) when the username has an `@` (`info@flowbiz.ai`).
+5. **Each Grafana panel needs a panel-level `datasource`** or PromQL panels
+   error to "No data" (they fall back to the default Loki datasource).
+
+**WIP not in repo:** none — all pushed to master. Host-only (gitignored, by
+design): `stacks/observability/.env` (Grafana creds), each remote's
+`observability-agent/secrets/remote_write_password`, `/etc/vsa/alert.env`.
+
 ## Latest Session — 2026-06-02 → 06-03 (DNS-01 propagation fix; renewal verified healthy)
 
 > **Resume context.** Triggered by cert-expiring email alarms. Outcome: the
