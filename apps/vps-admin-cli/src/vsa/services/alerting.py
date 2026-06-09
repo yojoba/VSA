@@ -25,6 +25,8 @@ from email.utils import formatdate
 from pathlib import Path
 from typing import Any
 
+import httpx
+
 from vsa.services import hub_client
 
 _LEVELS = {"info": 0, "warning": 1, "critical": 2}
@@ -50,6 +52,12 @@ class AlertConfig:
     ignore_containers: list[str] = field(default_factory=list)
     state_path: Path = _DEFAULT_STATE_PATH
     subject_prefix: str = "[VSA]"
+    # Disk-usage alarms (queried from the hub's Prometheus, which holds
+    # node_filesystem metrics for every VPS via remote-write).
+    prometheus_url: str = "http://localhost:9090"
+    disk_warn_percent: float = 85.0
+    disk_crit_percent: float = 92.0
+    disk_mounts: str = "/|/var/lib/docker"  # PromQL regex of mountpoints to watch
 
     @classmethod
     def from_env(cls) -> "AlertConfig":
@@ -69,6 +77,10 @@ class AlertConfig:
             ignore_containers=_split(os.environ.get("VSA_ALERT_IGNORE_CONTAINERS", "")),
             state_path=Path(os.environ.get("VSA_ALERT_STATE_PATH", str(_DEFAULT_STATE_PATH))),
             subject_prefix=os.environ.get("VSA_ALERT_SUBJECT_PREFIX", "[VSA]"),
+            prometheus_url=os.environ.get("VSA_ALERT_PROMETHEUS_URL", "http://localhost:9090"),
+            disk_warn_percent=float(os.environ.get("VSA_ALERT_DISK_WARN_PERCENT", "85")),
+            disk_crit_percent=float(os.environ.get("VSA_ALERT_DISK_CRIT_PERCENT", "92")),
+            disk_mounts=os.environ.get("VSA_ALERT_DISK_MOUNTS", "/|/var/lib/docker"),
         )
 
     def validate(self) -> list[str]:
@@ -177,6 +189,60 @@ def problems_from_containers(containers: list[dict[str, Any]], *, ignore: list[s
     return out
 
 
+def problems_from_disk(
+    prometheus_url: str,
+    *,
+    warn_percent: float,
+    crit_percent: float,
+    mounts: str,
+    timeout: float = 10.0,
+) -> list[Problem]:
+    """Disk-usage alarms per VPS/mountpoint, queried from Prometheus.
+
+    Reads node_filesystem_* for the watched mountpoints (all VPS, since vps-02/03
+    remote-write their node-exporter metrics). Emits a warning at ``warn_percent``
+    and a critical at ``crit_percent``. If Prometheus is unreachable, returns an
+    empty list rather than blocking the rest of the alert run — a down Prometheus
+    is itself caught by the container-down check.
+    """
+    expr = (
+        '100 * (1 - '
+        f'node_filesystem_avail_bytes{{fstype="ext4",mountpoint=~"{mounts}"}} / '
+        f'node_filesystem_size_bytes{{fstype="ext4",mountpoint=~"{mounts}"}})'
+    )
+    try:
+        resp = httpx.get(
+            f"{prometheus_url.rstrip('/')}/api/v1/query",
+            params={"query": expr},
+            timeout=timeout,
+        )
+        resp.raise_for_status()
+        result = resp.json().get("data", {}).get("result", [])
+    except (httpx.HTTPError, ValueError):
+        return []
+
+    out: list[Problem] = []
+    for series in result:
+        metric = series.get("metric", {})
+        vps = metric.get("vps_id", "—")
+        mount = metric.get("mountpoint", "?")
+        try:
+            pct = float(series["value"][1])
+        except (KeyError, IndexError, ValueError, TypeError):
+            continue
+        if pct >= crit_percent:
+            out.append(Problem(
+                "critical", "disk", vps, mount,
+                f"disk {mount} {pct:.0f}% full (threshold {crit_percent:.0f}%)",
+            ))
+        elif pct >= warn_percent:
+            out.append(Problem(
+                "warning", "disk", vps, mount,
+                f"disk {mount} {pct:.0f}% full (threshold {warn_percent:.0f}%)",
+            ))
+    return out
+
+
 def collect_problems(cfg: AlertConfig, *, now: datetime | None = None) -> list[Problem]:
     """Query the hub and return all problems at/above ``cfg.min_level``."""
     now = now or datetime.now(timezone.utc)
@@ -187,6 +253,12 @@ def collect_problems(cfg: AlertConfig, *, now: datetime | None = None) -> list[P
     )
     problems += problems_from_containers(
         hub_client.list_containers(), ignore=cfg.ignore_containers
+    )
+    problems += problems_from_disk(
+        cfg.prometheus_url,
+        warn_percent=cfg.disk_warn_percent,
+        crit_percent=cfg.disk_crit_percent,
+        mounts=cfg.disk_mounts,
     )
     threshold = _LEVELS.get(cfg.min_level, 1)
     kept = [p for p in problems if _LEVELS.get(p.level, 0) >= threshold]

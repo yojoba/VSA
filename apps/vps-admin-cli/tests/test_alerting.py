@@ -11,6 +11,7 @@ from vsa.services.alerting import (
     Problem,
     load_state,
     problems_from_containers,
+    problems_from_disk,
     problems_from_drift,
     problems_from_vps,
     save_state,
@@ -90,6 +91,7 @@ def test_collect_filters_below_min_level(monkeypatch):
     })
     monkeypatch.setattr(alerting.hub_client, "list_vps", lambda: [])
     monkeypatch.setattr(alerting.hub_client, "list_containers", lambda: [])
+    monkeypatch.setattr(alerting.httpx, "get", lambda *a, **k: _FakeResp(_disk_payload()))
 
     cfg = AlertConfig(min_level="warning")
     ps = alerting.collect_problems(cfg, now=NOW)
@@ -108,8 +110,50 @@ def test_collect_sorts_critical_first(monkeypatch):
     })
     monkeypatch.setattr(alerting.hub_client, "list_vps", lambda: [])
     monkeypatch.setattr(alerting.hub_client, "list_containers", lambda: [])
+    monkeypatch.setattr(alerting.httpx, "get", lambda *a, **k: _FakeResp(_disk_payload()))
     ps = alerting.collect_problems(AlertConfig(min_level="info"), now=NOW)
     assert ps[0].level == "critical"
+
+
+# --- disk ----------------------------------------------------------------
+
+
+class _FakeResp:
+    def __init__(self, payload):
+        self._payload = payload
+
+    def raise_for_status(self):
+        pass
+
+    def json(self):
+        return self._payload
+
+
+def _disk_payload(*samples):
+    return {"data": {"result": [
+        {"metric": {"vps_id": v, "mountpoint": m, "fstype": "ext4"}, "value": [0, str(p)]}
+        for v, m, p in samples
+    ]}}
+
+
+def test_disk_thresholds(monkeypatch):
+    monkeypatch.setattr(alerting.httpx, "get", lambda *a, **k: _FakeResp(
+        _disk_payload(("vps-01", "/", 93.0), ("vps-02", "/", 86.0), ("vps-03", "/", 40.0))
+    ))
+    ps = problems_from_disk("http://x", warn_percent=85, crit_percent=92, mounts="/")
+    by = {p.vps: p for p in ps}
+    assert by["vps-01"].level == "critical"
+    assert by["vps-02"].level == "warning"
+    assert "vps-03" not in by  # below warn threshold → no problem
+    assert by["vps-01"].category == "disk" and by["vps-01"].target == "/"
+
+
+def test_disk_prometheus_unreachable_is_empty(monkeypatch):
+    def boom(*a, **k):
+        raise alerting.httpx.ConnectError("refused")
+
+    monkeypatch.setattr(alerting.httpx, "get", boom)
+    assert problems_from_disk("http://x", warn_percent=85, crit_percent=92, mounts="/") == []
 
 
 # --- state ---------------------------------------------------------------

@@ -13,8 +13,16 @@ driven by `vsa alert` + a systemd timer on the hub.
 | `drift` | `/fleet/drift` (other kinds: rogue-host, missing-on-primary/standby, …) | as reported |
 | `agent` | `/vps` — `last_seen` age | stale > `AGENT_STALE_MINUTES` → critical; never reported → warning |
 | `container` | `/containers` — docker status | down (Exited≠0 / Dead / Restarting) → critical; `(unhealthy)` → warning |
+| `disk` | Prometheus `node_filesystem_*` (all VPS, per watched mountpoint) | ≥ `DISK_WARN_PERCENT` → warning; ≥ `DISK_CRIT_PERCENT` → critical |
 
 Only problems at or above `VSA_ALERT_MIN_LEVEL` (default `warning`) are kept.
+
+> The `disk` check reads the hub's Prometheus (`VSA_ALERT_PROMETHEUS_URL`,
+> default `http://localhost:9090`), which holds host filesystem metrics for
+> **every** VPS via the observability-agent remote-write. It watches the
+> mountpoints in `VSA_ALERT_DISK_MOUNTS` (default `/|/var/lib/docker`). If
+> Prometheus is unreachable the check is skipped (a down Prometheus is already
+> caught by the `container` check).
 
 ## Anti-spam: alert on change, not every run
 
@@ -92,6 +100,8 @@ disabling everything.
 | Change who's emailed | `VSA_ALERT_TO=a@x.ch,b@y.ch` |
 | Stop alerting on a cosmetic-unhealthy container | add its name to `VSA_ALERT_IGNORE_CONTAINERS` (comma substrings) |
 | Be more/less patient about a silent agent | `VSA_ALERT_AGENT_STALE_MINUTES=30` |
+| Tune disk alarm thresholds | `VSA_ALERT_DISK_WARN_PERCENT=85`, `VSA_ALERT_DISK_CRIT_PERCENT=92` |
+| Watch more/other mountpoints | `VSA_ALERT_DISK_MOUNTS=/|/var/lib/docker|/data` (PromQL regex) |
 
 Each `vsa alert` run reads the env fresh, so edits take effect on the next
 timer fire (≤15 min) — no `systemctl restart` required.
@@ -106,6 +116,11 @@ All `VSA_ALERT_*` env vars live in `/etc/vsa/alert.env`. See
 - `VSA_ALERT_AGENT_STALE_MINUTES` — how long before a silent agent is critical.
 - `VSA_ALERT_IGNORE_CONTAINERS` — name substrings to skip (e.g. known
   cosmetic-unhealthy `reverse-proxy-nginx`, `*promtail`).
+- `VSA_ALERT_PROMETHEUS_URL` — disk-metrics source (default `http://localhost:9090`).
+- `VSA_ALERT_DISK_WARN_PERCENT` / `VSA_ALERT_DISK_CRIT_PERCENT` — disk-usage
+  thresholds (default 85 / 92).
+- `VSA_ALERT_DISK_MOUNTS` — PromQL regex of mountpoints to watch (default
+  `/|/var/lib/docker`).
 
 ## Rotating the SMTP password
 

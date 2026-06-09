@@ -12,6 +12,10 @@ email via SMTP. All config is env-driven (see ``/etc/vsa/alert.env``):
     VSA_ALERT_MIN_LEVEL=warning            # info | warning | critical
     VSA_ALERT_AGENT_STALE_MINUTES=10
     VSA_ALERT_IGNORE_CONTAINERS=           # comma substrings to skip
+    VSA_ALERT_PROMETHEUS_URL=http://localhost:9090  # disk metrics source
+    VSA_ALERT_DISK_WARN_PERCENT=85         # warn at >= this % full
+    VSA_ALERT_DISK_CRIT_PERCENT=92         # critical at >= this % full
+    VSA_ALERT_DISK_MOUNTS=/|/var/lib/docker  # PromQL regex of mountpoints
 """
 
 from __future__ import annotations
