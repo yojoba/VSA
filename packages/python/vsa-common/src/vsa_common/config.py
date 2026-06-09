@@ -35,6 +35,10 @@ class VsaConfig(BaseModel):
 
     vsa_root: Path = Field(default_factory=_default_vsa_root)
     vps_id: str = Field(default_factory=lambda: os.environ.get("VSA_VPS_ID", "vps-01"))
+    # Explicit public IP for this node's heartbeat. Optional — when empty the
+    # agent autodetects the primary egress IP (see agent_sync.collect_heartbeat).
+    # Set this for NAT'd / floating-IP hosts where autodetection sees a private IP.
+    vps_ip: str = Field(default_factory=lambda: os.environ.get("VSA_VPS_IP", ""))
     srv_base: Path = Field(default=SRV_BASE)
     docker_network: str = Field(default=DOCKER_NETWORK)
     certbot_email: str = Field(default_factory=lambda: os.environ.get("VSA_CERTBOT_EMAIL", CERTBOT_EMAIL))

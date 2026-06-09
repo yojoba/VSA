@@ -41,14 +41,36 @@ def _save_sync_state(state: dict[str, Any]) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _primary_ip() -> str:
+    """Best-effort primary egress IP of this host.
+
+    Opens a UDP socket toward a public address (no packet is actually sent) and
+    reads back the local address the kernel picked — this returns the real
+    outbound interface IP, unlike ``gethostbyname(gethostname())`` which on many
+    hosts resolves to a loopback (``/etc/hosts`` maps the hostname to 127.0.0.1).
+    """
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        sock.connect(("8.8.8.8", 80))
+        return sock.getsockname()[0]
+    except OSError:
+        return ""
+    finally:
+        sock.close()
+
+
 def collect_heartbeat() -> dict[str, str]:
     """Return heartbeat payload with vps_id, hostname, and ip_address."""
     cfg = get_config()
     hostname = socket.gethostname()
-    try:
-        ip_address = socket.gethostbyname(hostname)
-    except socket.gaierror:
-        ip_address = ""
+    # Prefer an explicit override (NAT'd / floating-IP hosts), then the primary
+    # egress IP, then DNS resolution as a last resort.
+    ip_address = cfg.vps_ip or _primary_ip()
+    if not ip_address:
+        try:
+            ip_address = socket.gethostbyname(hostname)
+        except socket.gaierror:
+            ip_address = ""
     return {
         "vps_id": cfg.vps_id,
         "hostname": hostname,
