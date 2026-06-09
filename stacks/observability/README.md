@@ -72,16 +72,51 @@ Attach Grafana to the existing reverse proxy by provisioning a vhost (example `g
 
 ## Dashboards & Alerts
 
-1. Log into Grafana (default admin credentials from `.env`).
-2. Add data sources:
-   - Loki (`http://loki:3100`)
-   - Prometheus (`http://prometheus:9090`)
-3. Import dashboards (suggested IDs):
-   - 1860 (Node Exporter Full)
-   - 179 (Prometheus 2.0 Stats)
-   - 15190 (NGINX Overview)
-   - 193 (cAdvisor Exporter)
-4. Configure alerting channels as needed (Slack, email, etc.).
+### Data sources
+
+Two datasources are configured in Grafana (created via the API, stored in the
+`obs-grafana-data` volume):
+
+| Name | Type | URL | uid | Scope |
+|---|---|---|---|---|
+| Loki | loki | `http://loki:3100` | `ffl21vk4eobuoe` | logs from **all 3 VPS** (nginx access/error, journald, vsa-audit) |
+| Prometheus | prometheus | `http://prometheus:9090` | `vsa-prometheus` | metrics from **vps-01 only** (node-exporter host + cAdvisor containers) |
+
+> Remote VPS (vps-02/03) ship **logs** to the hub's Loki via `loki.flowbiz.ai`
+> but do **not** export metrics to Prometheus — so host/container metric panels
+> are hub-scoped, while traffic/log panels are fleet-wide (filter with the `VPS`
+> dashboard variable).
+
+### VSA — Fleet Overview dashboard
+
+The primary dashboard (`uid=vsa-fleet-overview`) is generated from a single
+source of truth and committed to the repo — do **not** hand-edit the JSON; edit
+the generator and regenerate:
+
+```bash
+cd stacks/observability/grafana
+python3 build_fleet_dashboard.py > dashboards/fleet-overview.json   # regenerate
+
+# Deploy / update in Grafana (admin creds from the observability .env):
+G="http://admin:<pass>@localhost:3011"   # NB: live host port is 3011, see below
+python3 -c "import json;d=json.load(open('dashboards/fleet-overview.json'));\
+print(json.dumps({'dashboard':d,'overwrite':True}))" \
+  | curl -s -X POST "$G/api/dashboards/db" -H 'Content-Type: application/json' --data @-
+```
+
+It has four rows: **Host** (disk per mount, CPU, memory, load, uptime, network),
+**Containers** (per-container CPU/memory/network via cAdvisor), **Web traffic**
+(req/s, status codes, top domains, methods — from Loki nginx logs), and
+**Logs & audit** (log volume by VPS, nginx errors, vsa-audit events). The dashboard
+lives in the Grafana DB (editable in the UI, survives restarts); the committed
+JSON is the reproducible source if the volume is ever lost.
+
+> **Port gotcha:** `.env` sets `GRAFANA_HTTP_PORT=3010`, but the live container
+> currently publishes Grafana on host port **3011** (3010 was already bound).
+> Use `docker port observability-grafana-1` to confirm before hitting the API.
+
+You can additionally import community dashboards by ID: 1860 (Node Exporter
+Full), 193 / 14282 (cAdvisor), 15190 (NGINX). Configure alert channels as needed.
 
 ## Security Notes
 
