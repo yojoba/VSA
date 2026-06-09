@@ -221,68 +221,71 @@ def row(title, y):
 
 panels = []
 
-# ── Row: Host — vps-01 (hub) ────────────────────────────────────────────────
-panels.append(row("Host — vps-01 (hub)", 0))
+# ── Row: Host — fleet (node-exporter) ───────────────────────────────────────
+# vps-01 metrics are stamped vps_id=vps-01 in prometheus.yml; vps-02/03 push via
+# remote-write with vps_id in external_labels. So every series is filterable by
+# the `$vps` template variable, and legends carry {{vps_id}}.
+panels.append(row("Host — fleet", 0))
 
-DISK = '100 * (1 - node_filesystem_avail_bytes{{mountpoint="{m}",fstype="ext4"}} / node_filesystem_size_bytes{{mountpoint="{m}",fstype="ext4"}})'
-panels.append(stat("Root disk / used", prom_target(DISK.format(m="/"), "/"), gp(0, 1, 4, 4),
+DISK = '100 * (1 - node_filesystem_avail_bytes{{mountpoint="{m}",fstype="ext4",vps_id=~"$vps"}} / node_filesystem_size_bytes{{mountpoint="{m}",fstype="ext4",vps_id=~"$vps"}})'
+panels.append(stat("Root disk / used", prom_target(DISK.format(m="/"), "{{vps_id}}"), gp(0, 1, 4, 4),
                    thresholds=[{"color": "green", "value": None}, {"color": "yellow", "value": 80}, {"color": "red", "value": 90}]))
-panels.append(stat("Docker disk used", prom_target(DISK.format(m="/var/lib/docker"), "docker"), gp(4, 1, 4, 4),
+panels.append(stat("Docker disk used", prom_target(DISK.format(m="/var/lib/docker"), "{{vps_id}}"), gp(4, 1, 4, 4),
                    thresholds=[{"color": "green", "value": None}, {"color": "yellow", "value": 80}, {"color": "red", "value": 90}]))
 panels.append(stat("Memory used", prom_target(
-    "100 * (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)", "mem"), gp(8, 1, 4, 4)))
+    '100 * (1 - node_memory_MemAvailable_bytes{vps_id=~"$vps"} / node_memory_MemTotal_bytes{vps_id=~"$vps"})',
+    "{{vps_id}}"), gp(8, 1, 4, 4)))
 panels.append(stat("CPU busy", prom_target(
-    "100 - (avg(rate(node_cpu_seconds_total{mode=\"idle\"}[5m])) * 100)", "cpu"), gp(12, 1, 4, 4),
+    '100 - (avg by (vps_id) (rate(node_cpu_seconds_total{mode="idle",vps_id=~"$vps"}[5m])) * 100)', "{{vps_id}}"),
+    gp(12, 1, 4, 4),
     thresholds=[{"color": "green", "value": None}, {"color": "yellow", "value": 70}, {"color": "red", "value": 90}]))
-panels.append(stat("Load (1m)", prom_target("node_load1", "load1"), gp(16, 1, 4, 4), unit="short",
+panels.append(stat("Load (1m)", prom_target('node_load1{vps_id=~"$vps"}', "{{vps_id}}"), gp(16, 1, 4, 4), unit="short",
                    thresholds=[{"color": "green", "value": None}, {"color": "yellow", "value": 2}, {"color": "red", "value": 4}]))
-panels.append(stat("Uptime", prom_target("time() - node_boot_time_seconds", "uptime"), gp(20, 1, 4, 4),
+panels.append(stat("Uptime", prom_target('time() - node_boot_time_seconds{vps_id=~"$vps"}', "{{vps_id}}"), gp(20, 1, 4, 4),
                    unit="s", decimals=0, color_mode="value",
                    thresholds=[{"color": "blue", "value": None}]))
 
 panels.append(gauge("Disk used % per mount", prom_target(
-    '100 * (1 - node_filesystem_avail_bytes{fstype="ext4"} / node_filesystem_size_bytes{fstype="ext4"})',
-    "{{mountpoint}}"), gp(0, 5, 8, 8),
+    '100 * (1 - node_filesystem_avail_bytes{fstype="ext4",vps_id=~"$vps"} / node_filesystem_size_bytes{fstype="ext4",vps_id=~"$vps"})',
+    "{{vps_id}} {{mountpoint}}"), gp(0, 5, 8, 8),
     thresholds=[{"color": "green", "value": None}, {"color": "yellow", "value": 80}, {"color": "red", "value": 90}]))
-panels.append(timeseries("CPU usage by mode", [prom_target(
-    'sum by (mode) (rate(node_cpu_seconds_total{mode!="idle"}[5m])) * 100', "{{mode}}")],
-    gp(8, 5, 8, 8), unit="percent", stack=True))
-panels.append(timeseries("Memory", [
-    prom_target("node_memory_MemTotal_bytes", "total"),
-    prom_target("node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes", "used"),
-], gp(16, 5, 8, 8), unit="bytes"))
+panels.append(timeseries("CPU busy % per VPS", [prom_target(
+    '100 - (avg by (vps_id) (rate(node_cpu_seconds_total{mode="idle",vps_id=~"$vps"}[5m])) * 100)', "{{vps_id}}")],
+    gp(8, 5, 8, 8), unit="percent"))
+panels.append(timeseries("Memory used % per VPS", [prom_target(
+    '100 * (1 - node_memory_MemAvailable_bytes{vps_id=~"$vps"} / node_memory_MemTotal_bytes{vps_id=~"$vps"})',
+    "{{vps_id}}")], gp(16, 5, 8, 8), unit="percent"))
 
 panels.append(timeseries("Disk free per mount", [prom_target(
-    'node_filesystem_avail_bytes{fstype="ext4"}', "{{mountpoint}}")], gp(0, 13, 8, 8), unit="bytes"))
+    'node_filesystem_avail_bytes{fstype="ext4",vps_id=~"$vps"}', "{{vps_id}} {{mountpoint}}")],
+    gp(0, 13, 8, 8), unit="bytes"))
 panels.append(timeseries("Network I/O (ens3)", [
-    prom_target('rate(node_network_receive_bytes_total{device="ens3"}[5m])', "rx"),
-    prom_target('-rate(node_network_transmit_bytes_total{device="ens3"}[5m])', "tx"),
+    prom_target('rate(node_network_receive_bytes_total{device="ens3",vps_id=~"$vps"}[5m])', "{{vps_id}} rx"),
+    prom_target('-rate(node_network_transmit_bytes_total{device="ens3",vps_id=~"$vps"}[5m])', "{{vps_id}} tx"),
 ], gp(8, 13, 8, 8), unit="Bps"))
-panels.append(timeseries("Load average", [
-    prom_target("node_load1", "1m"),
-    prom_target("node_load5", "5m"),
-    prom_target("node_load15", "15m"),
+panels.append(timeseries("Load (1m) per VPS", [
+    prom_target('node_load1{vps_id=~"$vps"}', "{{vps_id}}"),
 ], gp(16, 13, 8, 8), unit="short", fill=0))
 
-# ── Row: Containers — vps-01 (cAdvisor) ─────────────────────────────────────
-panels.append(row("Containers — vps-01 (cAdvisor)", 21))
+# ── Row: Containers — fleet (cAdvisor) ──────────────────────────────────────
+panels.append(row("Containers — fleet (cAdvisor)", 21))
 panels.append(stat("Running containers", prom_target(
-    'count(rate(container_last_seen{name!=""}[2m]))', "containers", instant=True),
+    'count by (vps_id) (container_last_seen{name!="",vps_id=~"$vps"})', "{{vps_id}}", instant=True),
     gp(0, 22, 4, 8), unit="short", decimals=0, color_mode="value",
     thresholds=[{"color": "blue", "value": None}]))
 panels.append(timeseries("Top 10 containers — CPU", [prom_target(
-    'topk(10, sum by (name) (rate(container_cpu_usage_seconds_total{name!=""}[5m])) * 100)',
-    "{{name}}")], gp(4, 22, 10, 8), unit="percent", legend_table=True))
+    'topk(10, sum by (vps_id, name) (rate(container_cpu_usage_seconds_total{name!="",vps_id=~"$vps"}[5m])) * 100)',
+    "{{vps_id}}/{{name}}")], gp(4, 22, 10, 8), unit="percent", legend_table=True))
 panels.append(timeseries("Top 10 containers — Memory", [prom_target(
-    'topk(10, sum by (name) (container_memory_usage_bytes{name!=""}))',
-    "{{name}}")], gp(14, 22, 10, 8), unit="bytes", legend_table=True))
+    'topk(10, sum by (vps_id, name) (container_memory_usage_bytes{name!="",vps_id=~"$vps"}))',
+    "{{vps_id}}/{{name}}")], gp(14, 22, 10, 8), unit="bytes", legend_table=True))
 
 panels.append(bargauge("Memory by container (top 15)", prom_target(
-    'topk(15, sum by (name) (container_memory_usage_bytes{name!=""}))', "{{name}}", instant=True),
-    gp(0, 30, 12, 9), unit="bytes"))
+    'topk(15, sum by (vps_id, name) (container_memory_usage_bytes{name!="",vps_id=~"$vps"}))',
+    "{{vps_id}}/{{name}}", instant=True), gp(0, 30, 12, 9), unit="bytes"))
 panels.append(timeseries("Container network RX", [prom_target(
-    'topk(10, sum by (name) (rate(container_network_receive_bytes_total{name!=""}[5m])))',
-    "{{name}}")], gp(12, 30, 12, 9), unit="Bps", legend_table=True))
+    'topk(10, sum by (vps_id, name) (rate(container_network_receive_bytes_total{name!="",vps_id=~"$vps"}[5m])))',
+    "{{vps_id}}/{{name}}")], gp(12, 30, 12, 9), unit="Bps", legend_table=True))
 
 # ── Row: Web traffic — fleet (Loki nginx-domain-access) ─────────────────────
 panels.append(row("Web traffic — fleet", 39))

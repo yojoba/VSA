@@ -45,7 +45,7 @@
     {
       "id": 1,
       "type": "row",
-      "title": "Host \u2014 vps-01 (hub)",
+      "title": "Host \u2014 fleet",
       "gridPos": {
         "x": 0,
         "y": 0,
@@ -71,8 +71,8 @@
             "type": "prometheus",
             "uid": "vsa-prometheus"
           },
-          "expr": "100 * (1 - node_filesystem_avail_bytes{mountpoint=\"/\",fstype=\"ext4\"} / node_filesystem_size_bytes{mountpoint=\"/\",fstype=\"ext4\"})",
-          "legendFormat": "/",
+          "expr": "100 * (1 - node_filesystem_avail_bytes{mountpoint=\"/\",fstype=\"ext4\",vps_id=~\"$vps\"} / node_filesystem_size_bytes{mountpoint=\"/\",fstype=\"ext4\",vps_id=~\"$vps\"})",
+          "legendFormat": "{{vps_id}}",
           "instant": false,
           "range": true,
           "refId": "A"
@@ -139,8 +139,8 @@
             "type": "prometheus",
             "uid": "vsa-prometheus"
           },
-          "expr": "100 * (1 - node_filesystem_avail_bytes{mountpoint=\"/var/lib/docker\",fstype=\"ext4\"} / node_filesystem_size_bytes{mountpoint=\"/var/lib/docker\",fstype=\"ext4\"})",
-          "legendFormat": "docker",
+          "expr": "100 * (1 - node_filesystem_avail_bytes{mountpoint=\"/var/lib/docker\",fstype=\"ext4\",vps_id=~\"$vps\"} / node_filesystem_size_bytes{mountpoint=\"/var/lib/docker\",fstype=\"ext4\",vps_id=~\"$vps\"})",
+          "legendFormat": "{{vps_id}}",
           "instant": false,
           "range": true,
           "refId": "A"
@@ -207,8 +207,8 @@
             "type": "prometheus",
             "uid": "vsa-prometheus"
           },
-          "expr": "100 * (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)",
-          "legendFormat": "mem",
+          "expr": "100 * (1 - node_memory_MemAvailable_bytes{vps_id=~\"$vps\"} / node_memory_MemTotal_bytes{vps_id=~\"$vps\"})",
+          "legendFormat": "{{vps_id}}",
           "instant": false,
           "range": true,
           "refId": "A"
@@ -275,8 +275,8 @@
             "type": "prometheus",
             "uid": "vsa-prometheus"
           },
-          "expr": "100 - (avg(rate(node_cpu_seconds_total{mode=\"idle\"}[5m])) * 100)",
-          "legendFormat": "cpu",
+          "expr": "100 - (avg by (vps_id) (rate(node_cpu_seconds_total{mode=\"idle\",vps_id=~\"$vps\"}[5m])) * 100)",
+          "legendFormat": "{{vps_id}}",
           "instant": false,
           "range": true,
           "refId": "A"
@@ -343,8 +343,8 @@
             "type": "prometheus",
             "uid": "vsa-prometheus"
           },
-          "expr": "node_load1",
-          "legendFormat": "load1",
+          "expr": "node_load1{vps_id=~\"$vps\"}",
+          "legendFormat": "{{vps_id}}",
           "instant": false,
           "range": true,
           "refId": "A"
@@ -411,8 +411,8 @@
             "type": "prometheus",
             "uid": "vsa-prometheus"
           },
-          "expr": "time() - node_boot_time_seconds",
-          "legendFormat": "uptime",
+          "expr": "time() - node_boot_time_seconds{vps_id=~\"$vps\"}",
+          "legendFormat": "{{vps_id}}",
           "instant": false,
           "range": true,
           "refId": "A"
@@ -471,8 +471,8 @@
             "type": "prometheus",
             "uid": "vsa-prometheus"
           },
-          "expr": "100 * (1 - node_filesystem_avail_bytes{fstype=\"ext4\"} / node_filesystem_size_bytes{fstype=\"ext4\"})",
-          "legendFormat": "{{mountpoint}}",
+          "expr": "100 * (1 - node_filesystem_avail_bytes{fstype=\"ext4\",vps_id=~\"$vps\"} / node_filesystem_size_bytes{fstype=\"ext4\",vps_id=~\"$vps\"})",
+          "legendFormat": "{{vps_id}} {{mountpoint}}",
           "instant": false,
           "range": true,
           "refId": "A"
@@ -525,7 +525,7 @@
     {
       "id": 9,
       "type": "timeseries",
-      "title": "CPU usage by mode",
+      "title": "CPU busy % per VPS",
       "gridPos": {
         "x": 8,
         "y": 5,
@@ -538,8 +538,8 @@
             "type": "prometheus",
             "uid": "vsa-prometheus"
           },
-          "expr": "sum by (mode) (rate(node_cpu_seconds_total{mode!=\"idle\"}[5m])) * 100",
-          "legendFormat": "{{mode}}",
+          "expr": "100 - (avg by (vps_id) (rate(node_cpu_seconds_total{mode=\"idle\",vps_id=~\"$vps\"}[5m])) * 100)",
+          "legendFormat": "{{vps_id}}",
           "instant": false,
           "range": true,
           "refId": "A"
@@ -555,7 +555,7 @@
             "fillOpacity": 10,
             "showPoints": "never",
             "stacking": {
-              "mode": "normal",
+              "mode": "none",
               "group": "A"
             },
             "axisPlacement": "auto"
@@ -585,7 +585,7 @@
     {
       "id": 10,
       "type": "timeseries",
-      "title": "Memory",
+      "title": "Memory used % per VPS",
       "gridPos": {
         "x": 16,
         "y": 5,
@@ -598,19 +598,8 @@
             "type": "prometheus",
             "uid": "vsa-prometheus"
           },
-          "expr": "node_memory_MemTotal_bytes",
-          "legendFormat": "total",
-          "instant": false,
-          "range": true,
-          "refId": "A"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "vsa-prometheus"
-          },
-          "expr": "node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes",
-          "legendFormat": "used",
+          "expr": "100 * (1 - node_memory_MemAvailable_bytes{vps_id=~\"$vps\"} / node_memory_MemTotal_bytes{vps_id=~\"$vps\"})",
+          "legendFormat": "{{vps_id}}",
           "instant": false,
           "range": true,
           "refId": "A"
@@ -618,7 +607,7 @@
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "bytes",
+          "unit": "percent",
           "decimals": null,
           "custom": {
             "drawStyle": "line",
@@ -669,8 +658,8 @@
             "type": "prometheus",
             "uid": "vsa-prometheus"
           },
-          "expr": "node_filesystem_avail_bytes{fstype=\"ext4\"}",
-          "legendFormat": "{{mountpoint}}",
+          "expr": "node_filesystem_avail_bytes{fstype=\"ext4\",vps_id=~\"$vps\"}",
+          "legendFormat": "{{vps_id}} {{mountpoint}}",
           "instant": false,
           "range": true,
           "refId": "A"
@@ -729,8 +718,8 @@
             "type": "prometheus",
             "uid": "vsa-prometheus"
           },
-          "expr": "rate(node_network_receive_bytes_total{device=\"ens3\"}[5m])",
-          "legendFormat": "rx",
+          "expr": "rate(node_network_receive_bytes_total{device=\"ens3\",vps_id=~\"$vps\"}[5m])",
+          "legendFormat": "{{vps_id}} rx",
           "instant": false,
           "range": true,
           "refId": "A"
@@ -740,8 +729,8 @@
             "type": "prometheus",
             "uid": "vsa-prometheus"
           },
-          "expr": "-rate(node_network_transmit_bytes_total{device=\"ens3\"}[5m])",
-          "legendFormat": "tx",
+          "expr": "-rate(node_network_transmit_bytes_total{device=\"ens3\",vps_id=~\"$vps\"}[5m])",
+          "legendFormat": "{{vps_id}} tx",
           "instant": false,
           "range": true,
           "refId": "A"
@@ -787,7 +776,7 @@
     {
       "id": 13,
       "type": "timeseries",
-      "title": "Load average",
+      "title": "Load (1m) per VPS",
       "gridPos": {
         "x": 16,
         "y": 13,
@@ -800,30 +789,8 @@
             "type": "prometheus",
             "uid": "vsa-prometheus"
           },
-          "expr": "node_load1",
-          "legendFormat": "1m",
-          "instant": false,
-          "range": true,
-          "refId": "A"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "vsa-prometheus"
-          },
-          "expr": "node_load5",
-          "legendFormat": "5m",
-          "instant": false,
-          "range": true,
-          "refId": "A"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "vsa-prometheus"
-          },
-          "expr": "node_load15",
-          "legendFormat": "15m",
+          "expr": "node_load1{vps_id=~\"$vps\"}",
+          "legendFormat": "{{vps_id}}",
           "instant": false,
           "range": true,
           "refId": "A"
@@ -869,7 +836,7 @@
     {
       "id": 14,
       "type": "row",
-      "title": "Containers \u2014 vps-01 (cAdvisor)",
+      "title": "Containers \u2014 fleet (cAdvisor)",
       "gridPos": {
         "x": 0,
         "y": 21,
@@ -895,8 +862,8 @@
             "type": "prometheus",
             "uid": "vsa-prometheus"
           },
-          "expr": "count(rate(container_last_seen{name!=\"\"}[2m]))",
-          "legendFormat": "containers",
+          "expr": "count by (vps_id) (container_last_seen{name!=\"\",vps_id=~\"$vps\"})",
+          "legendFormat": "{{vps_id}}",
           "instant": true,
           "range": false,
           "refId": "A"
@@ -955,8 +922,8 @@
             "type": "prometheus",
             "uid": "vsa-prometheus"
           },
-          "expr": "topk(10, sum by (name) (rate(container_cpu_usage_seconds_total{name!=\"\"}[5m])) * 100)",
-          "legendFormat": "{{name}}",
+          "expr": "topk(10, sum by (vps_id, name) (rate(container_cpu_usage_seconds_total{name!=\"\",vps_id=~\"$vps\"}[5m])) * 100)",
+          "legendFormat": "{{vps_id}}/{{name}}",
           "instant": false,
           "range": true,
           "refId": "A"
@@ -1019,8 +986,8 @@
             "type": "prometheus",
             "uid": "vsa-prometheus"
           },
-          "expr": "topk(10, sum by (name) (container_memory_usage_bytes{name!=\"\"}))",
-          "legendFormat": "{{name}}",
+          "expr": "topk(10, sum by (vps_id, name) (container_memory_usage_bytes{name!=\"\",vps_id=~\"$vps\"}))",
+          "legendFormat": "{{vps_id}}/{{name}}",
           "instant": false,
           "range": true,
           "refId": "A"
@@ -1083,8 +1050,8 @@
             "type": "prometheus",
             "uid": "vsa-prometheus"
           },
-          "expr": "topk(15, sum by (name) (container_memory_usage_bytes{name!=\"\"}))",
-          "legendFormat": "{{name}}",
+          "expr": "topk(15, sum by (vps_id, name) (container_memory_usage_bytes{name!=\"\",vps_id=~\"$vps\"}))",
+          "legendFormat": "{{vps_id}}/{{name}}",
           "instant": true,
           "range": false,
           "refId": "A"
@@ -1140,8 +1107,8 @@
             "type": "prometheus",
             "uid": "vsa-prometheus"
           },
-          "expr": "topk(10, sum by (name) (rate(container_network_receive_bytes_total{name!=\"\"}[5m])))",
-          "legendFormat": "{{name}}",
+          "expr": "topk(10, sum by (vps_id, name) (rate(container_network_receive_bytes_total{name!=\"\",vps_id=~\"$vps\"}[5m])))",
+          "legendFormat": "{{vps_id}}/{{name}}",
           "instant": false,
           "range": true,
           "refId": "A"
