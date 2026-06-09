@@ -117,6 +117,10 @@
           "fields": "",
           "values": false
         }
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vsa-prometheus"
       }
     },
     {
@@ -181,6 +185,10 @@
           "fields": "",
           "values": false
         }
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vsa-prometheus"
       }
     },
     {
@@ -245,6 +253,10 @@
           "fields": "",
           "values": false
         }
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vsa-prometheus"
       }
     },
     {
@@ -309,6 +321,10 @@
           "fields": "",
           "values": false
         }
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vsa-prometheus"
       }
     },
     {
@@ -373,6 +389,10 @@
           "fields": "",
           "values": false
         }
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vsa-prometheus"
       }
     },
     {
@@ -429,6 +449,10 @@
           "fields": "",
           "values": false
         }
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vsa-prometheus"
       }
     },
     {
@@ -492,6 +516,10 @@
           "fields": "",
           "values": false
         }
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vsa-prometheus"
       }
     },
     {
@@ -548,6 +576,10 @@
           "placement": "bottom",
           "calcs": []
         }
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vsa-prometheus"
       }
     },
     {
@@ -615,6 +647,10 @@
           "placement": "bottom",
           "calcs": []
         }
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vsa-prometheus"
       }
     },
     {
@@ -671,6 +707,10 @@
           "placement": "bottom",
           "calcs": []
         }
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vsa-prometheus"
       }
     },
     {
@@ -738,6 +778,10 @@
           "placement": "bottom",
           "calcs": []
         }
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vsa-prometheus"
       }
     },
     {
@@ -816,6 +860,10 @@
           "placement": "bottom",
           "calcs": []
         }
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vsa-prometheus"
       }
     },
     {
@@ -885,6 +933,10 @@
           "fields": "",
           "values": false
         }
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vsa-prometheus"
       }
     },
     {
@@ -945,6 +997,10 @@
             "lastNotNull"
           ]
         }
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vsa-prometheus"
       }
     },
     {
@@ -1005,6 +1061,10 @@
             "lastNotNull"
           ]
         }
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vsa-prometheus"
       }
     },
     {
@@ -1058,6 +1118,10 @@
           "fields": "",
           "values": false
         }
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vsa-prometheus"
       }
     },
     {
@@ -1118,6 +1182,10 @@
             "lastNotNull"
           ]
         }
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vsa-prometheus"
       }
     },
     {
@@ -1187,6 +1255,10 @@
           "fields": "",
           "values": false
         }
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "ffl21vk4eobuoe"
       }
     },
     {
@@ -1251,6 +1323,10 @@
           "fields": "",
           "values": false
         }
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "ffl21vk4eobuoe"
       }
     },
     {
@@ -1307,6 +1383,10 @@
           "placement": "bottom",
           "calcs": []
         }
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "ffl21vk4eobuoe"
       }
     },
     {
@@ -1328,7 +1408,7 @@
           "expr": "topk(12, sum by (domain) (count_over_time({job=\"nginx-domain-access\", vps_id=~\"$vps\"}[$__range])))",
           "legendFormat": "{{domain}}",
           "instant": true,
-          "queryType": "range",
+          "queryType": "instant",
           "refId": "A"
         }
       ],
@@ -1360,6 +1440,10 @@
           "fields": "",
           "values": false
         }
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "ffl21vk4eobuoe"
       }
     },
     {
@@ -1416,6 +1500,10 @@
           "placement": "bottom",
           "calcs": []
         }
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "ffl21vk4eobuoe"
       }
     },
     {
@@ -1437,7 +1525,7 @@
           "expr": "sum by (method) (count_over_time({job=\"nginx-domain-access\", vps_id=~\"$vps\"}[$__range]))",
           "legendFormat": "{{method}}",
           "instant": true,
-          "queryType": "range",
+          "queryType": "instant",
           "refId": "A"
         }
       ],
@@ -1467,6 +1555,10 @@
             "percent"
           ]
         }
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "ffl21vk4eobuoe"
       }
     },
     {
@@ -1536,6 +1628,10 @@
           "placement": "bottom",
           "calcs": []
         }
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "ffl21vk4eobuoe"
       }
     },
     {
@@ -1568,6 +1664,10 @@
         "enableLogDetails": true,
         "sortOrder": "Descending",
         "dedupStrategy": "none"
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "ffl21vk4eobuoe"
       }
     },
     {
@@ -1600,6 +1700,10 @@
         "enableLogDetails": true,
         "sortOrder": "Descending",
         "dedupStrategy": "none"
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "ffl21vk4eobuoe"
       }
     }
   ],

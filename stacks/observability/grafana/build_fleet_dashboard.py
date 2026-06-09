@@ -49,7 +49,7 @@ def loki_target(expr, legend="", instant=False):
         "expr": expr,
         "legendFormat": legend,
         "instant": instant,
-        "queryType": "range",
+        "queryType": "instant" if instant else "range",
         "refId": "A",
     }
 
@@ -315,6 +315,16 @@ panels.append(timeseries("Log volume by VPS", [loki_target(
     "{{vps_id}}")], gp(0, 58, 24, 7), unit="logs/s" if False else "short", stack=True, ds="loki"))
 panels.append(logs("NGINX errors", '{job="nginx-error", vps_id=~"$vps"}', gp(0, 65, 12, 10)))
 panels.append(logs("VSA audit events", '{job="vsa-audit", vps_id=~"$vps"}', gp(12, 65, 12, 10)))
+
+# Set the panel-level datasource from each panel's first target. Without this,
+# Grafana falls back to the default datasource (Loki) to interpret the panel, so
+# Prometheus panels send PromQL to Loki and render "No data" with a query error.
+for _p in panels:
+    if _p.get("type") == "row":
+        continue
+    _tgts = _p.get("targets") or []
+    if _tgts:
+        _p["datasource"] = _tgts[0]["datasource"]
 
 # ── Templating ──────────────────────────────────────────────────────────────
 templating = {
