@@ -1,0 +1,949 @@
+{
+  "uid": "vsa-electroziles",
+  "title": "Electroziles \u2014 Trafic web",
+  "tags": [
+    "vsa",
+    "electroziles",
+    "traffic",
+    "flowbiz"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 0,
+  "refresh": "5m",
+  "time": {
+    "from": "now-7d",
+    "to": "now"
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "domain",
+        "type": "query",
+        "label": "Domaine",
+        "datasource": {
+          "type": "loki",
+          "uid": "ffl21vk4eobuoe"
+        },
+        "query": {
+          "label": "domain",
+          "stream": "{job=\"nginx-domain-access\"}",
+          "type": 1
+        },
+        "definition": "label_values({job=\"nginx-domain-access\"}, domain)",
+        "regex": "/electroziles/",
+        "refresh": 2,
+        "includeAll": true,
+        "allValue": ".*electroziles.*",
+        "multi": true,
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "row",
+      "title": "Aper\u00e7u \u2014 electroziles",
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 1
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Visiteurs uniques (approx, p\u00e9riode)",
+      "gridPos": {
+        "x": 0,
+        "y": 1,
+        "w": 4,
+        "h": 5
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "ffl21vk4eobuoe"
+          },
+          "expr": "count(sum by (cip) (count_over_time({job=\"nginx-domain-access\", domain=~\"$domain\"} | json | label_format cip=\"{{ if .http_x_forwarded_for }}{{ .http_x_forwarded_for }}{{ else }}{{ .remote_addr }}{{ end }}\" [$__range])))",
+          "legendFormat": "visiteurs",
+          "instant": true,
+          "queryType": "instant",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "purple",
+                "value": null
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "textMode": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "ffl21vk4eobuoe"
+      }
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Total requ\u00eates (p\u00e9riode)",
+      "gridPos": {
+        "x": 4,
+        "y": 1,
+        "w": 4,
+        "h": 5
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "ffl21vk4eobuoe"
+          },
+          "expr": "sum(count_over_time({job=\"nginx-domain-access\", domain=~\"$domain\"}[$__range]))",
+          "legendFormat": "requ\u00eates",
+          "instant": true,
+          "queryType": "instant",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "textMode": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "ffl21vk4eobuoe"
+      }
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Pages vues (p\u00e9riode, filtr\u00e9 bots)",
+      "gridPos": {
+        "x": 8,
+        "y": 1,
+        "w": 4,
+        "h": 5
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "ffl21vk4eobuoe"
+          },
+          "expr": "sum(count_over_time({job=\"nginx-domain-access\", domain=~\"$domain\", method=\"GET\", status=~\"200|304\"} !~ `(?i)/_next/|/static/|wp-login|xmlrpc|\\.php|\\.env|\\.git|\\.(js|css|png|jpe?g|gif|svg|ico|woff2?|ttf|map|webp|json|xml|txt)` [$__range]))",
+          "legendFormat": "pages",
+          "instant": true,
+          "queryType": "instant",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "textMode": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "ffl21vk4eobuoe"
+      }
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Requ\u00eates / s",
+      "gridPos": {
+        "x": 12,
+        "y": 1,
+        "w": 4,
+        "h": 5
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "ffl21vk4eobuoe"
+          },
+          "expr": "sum(rate({job=\"nginx-domain-access\", domain=~\"$domain\"}[5m]))",
+          "legendFormat": "req/s",
+          "instant": false,
+          "queryType": "range",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "decimals": 2,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "textMode": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "ffl21vk4eobuoe"
+      }
+    },
+    {
+      "id": 6,
+      "type": "stat",
+      "title": "Erreurs 4xx (p\u00e9riode)",
+      "gridPos": {
+        "x": 16,
+        "y": 1,
+        "w": 4,
+        "h": 5
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "ffl21vk4eobuoe"
+          },
+          "expr": "sum(count_over_time({job=\"nginx-domain-access\", domain=~\"$domain\", status=~\"4..\"}[$__range]))",
+          "legendFormat": "4xx",
+          "instant": true,
+          "queryType": "instant",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "textMode": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "ffl21vk4eobuoe"
+      }
+    },
+    {
+      "id": 7,
+      "type": "stat",
+      "title": "Erreurs 5xx (p\u00e9riode)",
+      "gridPos": {
+        "x": 20,
+        "y": 1,
+        "w": 4,
+        "h": 5
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "ffl21vk4eobuoe"
+          },
+          "expr": "sum(count_over_time({job=\"nginx-domain-access\", domain=~\"$domain\", status=~\"5..\"}[$__range]))",
+          "legendFormat": "5xx",
+          "instant": true,
+          "queryType": "instant",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 1
+              },
+              {
+                "color": "red",
+                "value": 50
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "textMode": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "ffl21vk4eobuoe"
+      }
+    },
+    {
+      "id": 8,
+      "type": "row",
+      "title": "Trafic",
+      "gridPos": {
+        "x": 0,
+        "y": 6,
+        "w": 24,
+        "h": 1
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Requ\u00eates par domaine (.ch / .com)",
+      "gridPos": {
+        "x": 0,
+        "y": 7,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "ffl21vk4eobuoe"
+          },
+          "expr": "sum by (domain) (rate({job=\"nginx-domain-access\", domain=~\"$domain\"}[5m]))",
+          "legendFormat": "{{domain}}",
+          "instant": false,
+          "queryType": "range",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "decimals": null,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            },
+            "axisPlacement": "auto"
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        }
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "ffl21vk4eobuoe"
+      }
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Requ\u00eates par statut HTTP",
+      "gridPos": {
+        "x": 12,
+        "y": 7,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "ffl21vk4eobuoe"
+          },
+          "expr": "sum by (status) (rate({job=\"nginx-domain-access\", domain=~\"$domain\"}[5m]))",
+          "legendFormat": "{{status}}",
+          "instant": false,
+          "queryType": "range",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "decimals": null,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            },
+            "axisPlacement": "auto"
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        }
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "ffl21vk4eobuoe"
+      }
+    },
+    {
+      "id": 11,
+      "type": "piechart",
+      "title": "R\u00e9partition requ\u00eates .ch vs .com",
+      "gridPos": {
+        "x": 0,
+        "y": 15,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "ffl21vk4eobuoe"
+          },
+          "expr": "sum by (domain) (count_over_time({job=\"nginx-domain-access\", domain=~\"$domain\"}[$__range]))",
+          "legendFormat": "{{domain}}",
+          "instant": true,
+          "queryType": "instant",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "pieType": "donut",
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "values": [
+            "value",
+            "percent"
+          ]
+        }
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "ffl21vk4eobuoe"
+      }
+    },
+    {
+      "id": 12,
+      "type": "bargauge",
+      "title": "Visiteurs uniques par domaine (approx)",
+      "gridPos": {
+        "x": 8,
+        "y": 15,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "ffl21vk4eobuoe"
+          },
+          "expr": "count by (domain) (sum by (domain, cip) (count_over_time({job=\"nginx-domain-access\", domain=~\"$domain\"} | json | label_format cip=\"{{ if .http_x_forwarded_for }}{{ .http_x_forwarded_for }}{{ else }}{{ .remote_addr }}{{ end }}\" [$__range])))",
+          "legendFormat": "{{domain}}",
+          "instant": true,
+          "queryType": "instant",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "continuous-GrYlRd"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "displayMode": "gradient",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "ffl21vk4eobuoe"
+      }
+    },
+    {
+      "id": 13,
+      "type": "piechart",
+      "title": "M\u00e9thodes HTTP",
+      "gridPos": {
+        "x": 16,
+        "y": 15,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "ffl21vk4eobuoe"
+          },
+          "expr": "sum by (method) (count_over_time({job=\"nginx-domain-access\", domain=~\"$domain\"}[$__range]))",
+          "legendFormat": "{{method}}",
+          "instant": true,
+          "queryType": "instant",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "pieType": "donut",
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "values": [
+            "value",
+            "percent"
+          ]
+        }
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "ffl21vk4eobuoe"
+      }
+    },
+    {
+      "id": 14,
+      "type": "row",
+      "title": "Pages & erreurs",
+      "gridPos": {
+        "x": 0,
+        "y": 23,
+        "w": 24,
+        "h": 1
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 15,
+      "type": "bargauge",
+      "title": "Top 15 pages servies (200/304, p\u00e9riode)",
+      "gridPos": {
+        "x": 0,
+        "y": 24,
+        "w": 12,
+        "h": 11
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "ffl21vk4eobuoe"
+          },
+          "expr": "topk(15, sum by (path) (count_over_time({job=\"nginx-domain-access\", domain=~\"$domain\", method=\"GET\", status=~\"200|304\"} !~ `(?i)/_next/|/static/|wp-login|xmlrpc|\\.php|\\.env|\\.git|\\.(js|css|png|jpe?g|gif|svg|ico|woff2?|ttf|map|webp|json|xml|txt)` | regexp `\"uri\":\"(?P<path>[^?\"]*)` [$__range])))",
+          "legendFormat": "{{path}}",
+          "instant": true,
+          "queryType": "instant",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "continuous-GrYlRd"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "displayMode": "gradient",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "ffl21vk4eobuoe"
+      }
+    },
+    {
+      "id": 16,
+      "type": "timeseries",
+      "title": "Pages vues / s par domaine (filtr\u00e9 bots & assets)",
+      "gridPos": {
+        "x": 12,
+        "y": 24,
+        "w": 12,
+        "h": 11
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "ffl21vk4eobuoe"
+          },
+          "expr": "sum by (domain) (rate({job=\"nginx-domain-access\", domain=~\"$domain\", method=\"GET\", status=~\"200|304\"} !~ `(?i)/_next/|/static/|wp-login|xmlrpc|\\.php|\\.env|\\.git|\\.(js|css|png|jpe?g|gif|svg|ico|woff2?|ttf|map|webp|json|xml|txt)` [5m]))",
+          "legendFormat": "{{domain}}",
+          "instant": false,
+          "queryType": "range",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "decimals": null,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            },
+            "axisPlacement": "auto"
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        }
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "ffl21vk4eobuoe"
+      }
+    },
+    {
+      "id": 17,
+      "type": "row",
+      "title": "Logs",
+      "gridPos": {
+        "x": 0,
+        "y": 35,
+        "w": 24,
+        "h": 1
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 18,
+      "type": "logs",
+      "title": "Requ\u00eates r\u00e9centes",
+      "gridPos": {
+        "x": 0,
+        "y": 36,
+        "w": 12,
+        "h": 12
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "ffl21vk4eobuoe"
+          },
+          "expr": "{job=\"nginx-domain-access\", domain=~\"$domain\"}",
+          "legendFormat": "",
+          "instant": false,
+          "queryType": "range",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "wrapLogMessage": true,
+        "prettifyLogMessage": true,
+        "enableLogDetails": true,
+        "sortOrder": "Descending",
+        "dedupStrategy": "none"
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "ffl21vk4eobuoe"
+      }
+    },
+    {
+      "id": 19,
+      "type": "logs",
+      "title": "Erreurs 4xx / 5xx",
+      "gridPos": {
+        "x": 12,
+        "y": 36,
+        "w": 12,
+        "h": 12
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "ffl21vk4eobuoe"
+          },
+          "expr": "{job=\"nginx-domain-access\", domain=~\"$domain\", status=~\"[45]..\"}",
+          "legendFormat": "",
+          "instant": false,
+          "queryType": "range",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "wrapLogMessage": true,
+        "prettifyLogMessage": true,
+        "enableLogDetails": true,
+        "sortOrder": "Descending",
+        "dedupStrategy": "none"
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "ffl21vk4eobuoe"
+      }
+    }
+  ],
+  "editable": true
+}
