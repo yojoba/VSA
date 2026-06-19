@@ -540,6 +540,10 @@ Design points:
 All services are configured to survive unattended reboots:
 
 - **Docker daemon**: `systemctl enable docker` — starts on boot
+- **`live-restore`** (`/etc/docker/daemon.json`, hub): containers keep running
+  when `dockerd` itself is restarted/upgraded/crashes — only the Docker API
+  blips, not the workloads. Makes a `dockerd` restart a zero-downtime operation
+  (verify `LiveRestoreEnabled=true` before restarting). See LLD § Docker Daemon.
 - **All containers**: `restart: unless-stopped` or `restart: always` — Docker restarts them after boot
 - **Compose stacks**: All compose files include `restart: unless-stopped` for every service
 - **No systemd dependencies**: All services run as Docker containers, no external systemd units required for core functionality

@@ -235,6 +235,29 @@ infra/scripts/setup_observability_agent.sh
     node_modules), while the real site was served by its container — check
     `ps aux | grep dev/github` for orphans before assuming an app is only Dockerised.
 
+### Host load / dockerd footguns (2026-06-19 session)
+
+18. **High host load + `dockerd` pegged but every container's CPU is low → the
+    problem is INSIDE dockerd, not a container.** `ps -o etimes,cputimes <dockerd-pid>`
+    gives cores-averaged-since-boot; `sudo kill -USR1 <dockerd-pid>` dumps all
+    goroutines to `/var/run/docker/goroutine-stacks-*.log` — grep `[running`/`[runnable`
+    for what's on-CPU. The 2026-06-19 culprit was a **BuildKit
+    provenance/build-history runaway** (123 wedged goroutines recursing a 6.3 GB
+    build cache for 129 days = ~1.8 cores). Cleared by a dockerd restart + `docker
+    builder prune -af`; prevented with `BUILDX_NO_DEFAULT_ATTESTATIONS=1` in
+    `/etc/environment`. (`docker system prune` does NOT touch the BuildKit cache.)
+19. **Restart `dockerd` with ZERO container downtime via `live-restore`.** Now on
+    in `/etc/docker/daemon.json` (hub). To use: `systemctl reload docker` (SIGHUP,
+    no stop) → **verify `docker info --format '{{.LiveRestoreEnabled}}'` = `true`
+    BEFORE restarting** → `systemctl restart docker`. Containers keep serving
+    (shims + kernel iptables persist); only the Docker API blips a few seconds.
+    If `LiveRestoreEnabled` isn't `true`, a restart WILL stop all containers.
+20. **cAdvisor is CPU-tuned via compose `command` flags** (`--disable_metrics=…`,
+    `--docker_only`, `--housekeeping_interval=30s`) — keeps only cpu/memory/network/
+    last_seen. If a new Grafana panel needs another metric family, re-enable it in
+    `stacks/observability/compose.yml`. Tuning cAdvisor does NOT affect dockerd CPU
+    (it reads cgroups directly, never the Docker socket).
+
 ## Don't
 
 - Don't run `docker compose up` directly inside a stack dir — always

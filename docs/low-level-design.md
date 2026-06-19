@@ -40,6 +40,28 @@ Large dedicated disk (246G) — holds Docker images, container layers, and named
 | `obs-grafana-data` | `/var/lib/grafana` | Indefinite | ~50MB typical |
 | `obs-promtail-data` | `/var/lib/promtail` | N/A (position file) | <1MB |
 
+The **BuildKit build cache** also lives here (`/var/lib/docker/buildkit`). It is
+**not** touched by `docker system prune` — use `docker builder prune -af`. Left
+unbounded it grows to multiple GB and (with default provenance attestations on)
+can wedge `dockerd` — see the daemon note below.
+
+### Docker Daemon (`/etc/docker/daemon.json`)
+
+- **`live-restore: true`** (set 2026-06-19) — containers keep running when
+  `dockerd` is restarted/upgraded/crashes (they are managed by `containerd-shim`
+  + kernel iptables, not by `dockerd`). This makes a `systemctl restart docker`
+  a **zero-downtime** operation: enable it, `systemctl reload docker` (SIGHUP,
+  no stop), **verify `docker info --format '{{.LiveRestoreEnabled}}'` = `true`
+  BEFORE restarting**, then restart. The only blip is the Docker API/CLI for a
+  few seconds; running containers never stop.
+- **`BUILDX_NO_DEFAULT_ATTESTATIONS=1`** (in `/etc/environment`, not daemon.json)
+  — disables default BuildKit provenance attestations. Without it,
+  `recordBuildHistory`/`ProvenanceCreator` goroutines accumulate per
+  `compose up --build` and can recursively peg `dockerd` over the build-cache
+  graph (the 2026-06-19 incident: 123 wedged goroutines = ~1.8 cores for 129
+  days). Diagnose dockerd-internal CPU with `kill -USR1 <dockerd-pid>` →
+  `/var/run/docker/goroutine-stacks-*.log`.
+
 ## Observability Stack Internals
 
 ### Prometheus (`prom/prometheus:v2.53.0`)
@@ -87,6 +109,15 @@ expand env vars outside `external_labels`.
 > **Footgun:** node-exporter runs in a bridge netns, so its `node_network_*`
 > metrics only see the container's `eth0`, never the host `ens3`. Network panels
 > use cAdvisor `container_network_*` instead.
+
+**cAdvisor is CPU-tuned** (2026-06-19). Defaults collect dozens of metric groups
+every 1s on every cgroup (~6–7% CPU). The compose `command` restricts it to the
+4 families the Fleet Overview dashboard uses — `cpu`, `memory`, `network`,
+`last_seen` — via `--disable_metrics=disk,diskIO,tcp,udp,advtcp,sched,process,hugetlb,referenced_memory,cpu_topology,resctrl,percpu,memory_numa,perf_event`,
+plus `--docker_only=true` and `--housekeeping_interval=30s` (→ ~0.15% CPU). If a
+dashboard panel needs a new metric family, re-enable it here. cAdvisor reads
+cgroups from `/sys` + `/var/lib/docker` directly — it does **not** use the Docker
+socket.
 
 ### Loki (`grafana/loki:3.0.0`)
 
@@ -335,6 +366,8 @@ dify-net (isolated bridge)
 | Dashboard API config | `apps/vps-admin-api/src/vsa_api/config.py` | Python (Pydantic) |
 | DB migrations | `apps/vps-admin-api/alembic/versions/` | Python (Alembic) |
 | System mounts | `/etc/fstab` | fstab |
+| Docker daemon (`live-restore`) | `/etc/docker/daemon.json` | JSON (host-only) |
+| BuildKit attestations toggle | `/etc/environment` (`BUILDX_NO_DEFAULT_ATTESTATIONS=1`) | env (host-only) |
 | Hub/agent env (HUB_URL, HUB_AUTH, VPS_ID) | `/etc/vsa/agent.env` | env (mode 600) |
 | Alerting config (SMTP, recipients, level, disk thresholds) | `/etc/vsa/alert.env` | env (mode 600, gitignored) |
 | Remote-write password (per remote VPS) | `stacks/observability-agent/secrets/remote_write_password` | text (mode 644, gitignored) |
