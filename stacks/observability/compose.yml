@@ -99,6 +99,14 @@ services:
     image: gcr.io/cadvisor/cadvisor:v0.49.1
     restart: unless-stopped
     privileged: true
+    # Tuned to cut CPU: cAdvisor's defaults collect dozens of metric groups
+    # (disk, tcp/udp, process, sched, ...) every second on every cgroup. The
+    # Fleet Overview dashboard only needs cpu/memory/network/last_seen, so we
+    # disable the rest, scan only Docker cgroups, and slow housekeeping to 30s.
+    command:
+      - --housekeeping_interval=30s
+      - --docker_only=true
+      - --disable_metrics=disk,diskIO,tcp,udp,advtcp,sched,process,hugetlb,referenced_memory,cpu_topology,resctrl,percpu,memory_numa,perf_event
     volumes:
       - /:/rootfs:ro
       - /var/run:/var/run:ro

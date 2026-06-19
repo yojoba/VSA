@@ -2,6 +2,100 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Latest Session — 2026-06-19 (vps-01 high-load investigation → chronic dockerd/BuildKit peg killed, zero downtime)
+
+> **Resume context.** Triggered by "verifie le load de vps01" — load was **5.10
+> on 4 vCPU** (~128%, sustained, not a spike). The investigation peeled back
+> three layers; the real culprit was a **129-day chronic `dockerd` CPU peg**.
+> **Read before touching:** the hub's `/etc/docker/daemon.json`, the
+> `observability` cadvisor service, or anything that runs `docker compose build`
+> on the fleet.
+
+**Root cause (the big one): BuildKit provenance/build-history runaway.** A
+SIGUSR1 goroutine dump of `dockerd` (`kill -USR1 <MainPID>` → written to
+`/var/run/docker/goroutine-stacks-*.log`) showed **123 goroutines wedged in
+`moby/buildkit/solver/llbsolver.recordBuildHistory` → `ProvenanceCreator.Predicate`
+→ `exporter.ExportTo` (deep recursion) → bbolt cache reads**, plus 28 more
+blocked on the bbolt mutex they monopolized. `dockerd`'s cpu-time/elapsed ratio
+was **1.79 cores averaged over the full 129-day uptime** — i.e. it had been
+burning ~1.8 cores continuously *since boot*, not recently. The 6.3 GB BuildKit
+cache was the graph these goroutines looped over; every `docker compose up
+--build` (this fleet builds images locally a lot) fed it.
+
+**The fix — ZERO container downtime via `live-restore`.** Wedged goroutines can
+only be cleared by restarting the `dockerd` *process*. To do it without dropping
+the ~30 running containers:
+1. Wrote `/etc/docker/daemon.json` = `{"live-restore": true}` (was `{}`).
+2. `systemctl reload docker` (SIGHUP — does **not** stop containers) to arm
+   live-restore on the running daemon.
+3. **Gate:** verified `docker info --format '{{.LiveRestoreEnabled}}'` = `true`
+   *before* restarting (if not true, abort — restart would kill containers).
+4. `systemctl restart docker` → fresh daemon, containers kept running (shims +
+   kernel iptables persist), goroutines died with the old process. Verified
+   `docker ps -q | wc -l` = 30 before **and** after; dashboard/sites stayed 200.
+5. `docker builder prune -af` → reclaimed the 6.3 GB cache.
+
+**Result:** `dockerd` **178% → 0.5–1.0% steady**; load 1-min **5.10 → 1.31**.
+A transient ~116% right after the restart was just the 40 log-tail streams
+re-reading their backlog (one-shot), which settled.
+
+**Prevention (so it doesn't slowly rebuild):** added
+`BUILDX_NO_DEFAULT_ATTESTATIONS=1` to the hub's `/etc/environment` — disables the
+default provenance attestations whose history records wedged dockerd. `live-restore`
+in `daemon.json` is now permanent (all future daemon restarts/crashes are
+container-safe).
+
+**Secondary contributor (left as-is, it's real work):** Promtail tails **all**
+container logs through the Docker API (`observability/promtail-config.yml`
+`docker_sd_configs` → `unix:///var/run/docker.sock`), creating ~40
+`loggerutils.tailFiles`/`ReadLogs` goroutines in dockerd. A few % — normal cost
+of shipping logs to Loki. Could later switch to file-based tailing
+(`/var/lib/docker/containers/*/*.log`) to bypass dockerd entirely, at the cost
+of re-deriving container labels.
+
+**Also shipped this session (committed):**
+- **cAdvisor CPU tuned** (`stacks/observability/compose.yml`). It ran with **no
+  command flags** = worst-case defaults (dozens of metric groups every 1s on
+  every cgroup). Added `--housekeeping_interval=30s`, `--docker_only=true`, and
+  `--disable_metrics=disk,diskIO,tcp,udp,advtcp,sched,process,hugetlb,referenced_memory,cpu_topology,resctrl,percpu,memory_numa,perf_event`.
+  CPU **6–7% → 0.15%**. Keeps only `cpu`/`memory`/`network`/`last_seen` — the 4
+  families the Grafana **VSA — Fleet Overview** dashboard actually queries
+  (verified: 31/31/53/31 series still present, Prometheus `up{job="cadvisor"}=1`).
+  NOTE: cAdvisor reads cgroups from `/sys` + `/var/lib/docker` directly — it does
+  **not** touch the Docker socket, so this helped cAdvisor's own CPU but had zero
+  effect on the dockerd peg (a red herring early in the investigation).
+
+**Host-side / not in this repo (by design):**
+- Stopped+removed the **`deployer` container** (the abandoned WIP
+  `wip/deployer-on-flowbiz1` git-pull-and-redeploy mini-PaaS at
+  `deploy.flowbiz.ai`). It was up 3 months, leaked **13 zombie `git`** children
+  (spawned-but-never-reaped), and hadn't deployed anything since Mar 4. Only
+  `db`/0.13% CPU — **not** a load driver, just zombies + attack surface. Its
+  vhost/cert at `deploy.flowbiz.ai` are now dangling (nginx 502s, harmless) —
+  not yet unprovisioned.
+- **ghost-docker** (separate repo `~/dev/github/ghost-docker`, not VSA): its
+  `db` healthcheck ran `mysqladmin ping` every **1s** (`interval: 1s`,
+  `retries: 120`) → constant `docker exec` churn. Bumped to `30s`/`5`.
+
+**Footguns (don't repeat):**
+1. **`dockerd` high CPU with low per-container CPU = look inside dockerd, not at
+   containers.** `ps -o etimes,cputimes` on the dockerd PID gives the
+   averaged-since-boot core count; `kill -USR1 <pid>` dumps goroutines to
+   `/var/run/docker/goroutine-stacks-*.log` — grep for `[running`/`[runnable`
+   stacks, that's what's on-CPU.
+2. **To restart dockerd without downtime you MUST enable `live-restore` and
+   verify `LiveRestoreEnabled=true` BEFORE the restart.** Enabling it via reload
+   alone is not enough proof — check `docker info`.
+3. **The host VSA checkout is `~/dev/github/VSA` (uppercase V-S-A)**, not
+   `vsa`. SSH alias for vps-01 is `flowbiz-1` (`.ch` prod = `flowbiz-2/3`).
+4. **`docker system prune` does not touch BuildKit cache** — use `docker builder
+   prune -af`. Build cache lives on `/dev/sdb`, so it doesn't relieve root `/`.
+
+**WIP not in repo:** none from this session pushed yet — the commit
+(cadvisor + this note) is **local on master, not pushed**. Host already runs the
+tuned cadvisor (file scp'd + recreated). `daemon.json`, `/etc/environment`, and
+the ghost-docker edit are host-only by design.
+
 ## Latest Session — 2026-06-09 (disk-full outage → fleet-wide metrics + Grafana dashboard + disk alarms)
 
 > **Resume context.** Started from a broken `dashboard.flowbiz.ai/health`.
