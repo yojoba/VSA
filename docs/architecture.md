@@ -117,7 +117,7 @@ Pydantic models and constants shared between CLI and API:
 |-------|----------|---------|
 | `reverse-proxy` | NGINX 1.25, Certbot, NGINX Reloader | TLS termination, routing, per-domain JSON logging, auto-renewal |
 | `dashboard` | PostgreSQL 16, FastAPI, Next.js | Management dashboard |
-| `observability` | Grafana 10.4, Loki 3.0, Promtail 3.0, Prometheus 2.53, Node Exporter, cAdvisor | Monitoring and log aggregation (named volumes on dedicated disk); hub-side. Prometheus has `--web.enable-remote-write-receiver` and joins `flowbiz_ext` |
+| `observability` | Grafana 10.4, Loki 3.0, Promtail 3.0, Prometheus 2.53, Node Exporter, cAdvisor, Blackbox Exporter | Monitoring and log aggregation (named volumes on dedicated disk); hub-side. Prometheus has `--web.enable-remote-write-receiver` and joins `flowbiz_ext`. Blackbox Exporter adds external synthetic probes of public endpoints (see Data Flows) |
 | `observability-agent` | Promtail, Node Exporter, cAdvisor, Prometheus (agent mode) | Remote-VPS agent (vps-02/03): ships **logs** to the hub Loki and **metrics** to the hub Prometheus via remote-write |
 | `dify` | Dify platform | AI/LLM workbench |
 | `llm-gateway` | (placeholder) | LLM backend routing |
@@ -222,6 +222,34 @@ VPS-02..N (observability-agent)                 VPS-01 (Hub)
 No new public endpoint, DNS record or cert is needed on the remotes — the
 write path reuses the `loki.flowbiz.ai` vhost. `vsa alert`'s **disk** check
 reads this same Prometheus, so disk pressure on any VPS raises an email alarm.
+
+### External Synthetic Monitoring (blackbox, pull model)
+
+Blackbox Exporter on the hub probes **public HTTPS endpoints from OFF the target
+system** — a true external vantage. It was added to watch the **LokalFlash K8s
+app** (`app.lokalflash.ch`, `www.lokalflash.ch`), which runs on a separate
+Infomaniak Kubernetes cluster with its own in-cluster Sentry. Sentry only sees
+errors when the app *runs*; a dead edge (ingress down, DNS, TLS-cert lapse)
+produces no Sentry event at all. The hub, being outside that cluster, catches
+exactly that blind spot.
+
+```
+VPS-01 (Hub, observability stack)                    Public edge (K8s cluster)
+┌──────────────────────────────────────┐             ┌───────────────────────────┐
+│ Prometheus ── scrape /probe ─────────▶│  probe      │ Cloudflare (DNS-only) ──▶ │
+│   job "blackbox"                       │  (HTTPS) ──▶│   K8s ingress ──▶ api/www │
+│      ▼ probe_success                   │◀────────────│                           │
+│      ▼ probe_ssl_earliest_cert_expiry  │             └───────────────────────────┘
+│ vsa alert (problems_from_blackbox) ──▶ email (alexandre@netcool.ch) on change
+└──────────────────────────────────────┘
+```
+
+`app`/`www` are Cloudflare **DNS-only**, so the probe hits the K8s ingress
+directly (a genuine origin test, not a Cloudflare-edge test). Two alarms flow
+through the same `vsa alert` email pipe as the disk check: **endpoint down**
+(`probe_success==0` sustained ≥3 min) and **TLS-cert expiry** (backstop for
+cert-manager silently failing to renew). No agent or config lives on the K8s
+side — this is entirely hub-side and pull-based.
 
 ### Multi-VPS Hub-and-Agent
 

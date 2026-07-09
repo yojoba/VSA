@@ -14,6 +14,8 @@ driven by `vsa alert` + a systemd timer on the hub.
 | `agent` | `/vps` — `last_seen` age | stale > `AGENT_STALE_MINUTES` → critical; never reported → warning |
 | `container` | `/containers` — docker status | down (Exited≠0 / Dead / Restarting) → critical; `(unhealthy)` → warning |
 | `disk` | Prometheus `node_filesystem_*` (all VPS, per watched mountpoint) | ≥ `DISK_WARN_PERCENT` → warning; ≥ `DISK_CRIT_PERCENT` → critical |
+| `endpoint` | Prometheus blackbox `probe_success` (external synthetic probe, `vps=ext`) | down for ≥3 min → critical |
+| `cert` (external) | Prometheus blackbox `probe_ssl_earliest_cert_expiry` (`vps=ext`) | < `CERT_WARN_DAYS` → warning; < `CERT_CRIT_DAYS` → critical |
 
 Only problems at or above `VSA_ALERT_MIN_LEVEL` (default `warning`) are kept.
 
@@ -23,6 +25,16 @@ Only problems at or above `VSA_ALERT_MIN_LEVEL` (default `warning`) are kept.
 > mountpoints in `VSA_ALERT_DISK_MOUNTS` (default `/|/var/lib/docker`). If
 > Prometheus is unreachable the check is skipped (a down Prometheus is already
 > caught by the `container` check).
+
+> The `endpoint` + external-`cert` checks read the **blackbox** job in the same
+> Prometheus (see `docs/low-level-design.md` → Blackbox Exporter). They probe the
+> public LokalFlash K8s app (`app.lokalflash.ch`, `www.lokalflash.ch`) from the
+> hub — an off-cluster vantage that catches edge outages (ingress/DNS/cert) the
+> app's in-cluster Sentry can't see. `endpoint` uses a 3-min `max_over_time`
+> window (debounces flaky probes); the external `cert` thresholds are
+> `VSA_ALERT_CERT_WARN_DAYS` (default 14) / `VSA_ALERT_CERT_CRIT_DAYS` (default 3)
+> — a backstop for cert-manager silently failing to renew. Same Prometheus-down
+> behaviour: skipped, not fatal.
 
 ## Anti-spam: alert on change, not every run
 

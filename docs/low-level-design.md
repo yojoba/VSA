@@ -94,6 +94,7 @@ the remote-write series from vps-02/03.
 | `promtail` | `promtail:9080` | 9080 |
 | `node-exporter` | `node-exporter:9100` | 9100 |
 | `cadvisor` | `cadvisor:8080` | 8080 |
+| `blackbox` | `blackbox-exporter:9115` `/probe` (relabel) | 9115 |
 
 **Remote-write ingest (fleet-wide metrics):** vps-02/03 run the
 `observability-agent` stack (node-exporter + cAdvisor + `prometheus-agent` in
@@ -118,6 +119,47 @@ plus `--docker_only=true` and `--housekeeping_interval=30s` (→ ~0.15% CPU). If
 dashboard panel needs a new metric family, re-enable it here. cAdvisor reads
 cgroups from `/sys` + `/var/lib/docker` directly — it does **not** use the Docker
 socket.
+
+### Blackbox Exporter (`prom/blackbox-exporter:v0.25.0`)
+
+External synthetic probing of public HTTPS endpoints — added 2026-07 to give the
+**LokalFlash K8s app** (which runs off-fleet, on Infomaniak Kubernetes) a true
+external uptime + TLS-expiry check. Config is `stacks/observability/blackbox.yml`
+(one `http_2xx` module: `GET`, `follow_redirects: true`, `fail_if_not_ssl: true`,
+`insecure_skip_verify: false` so an invalid cert is itself a probe failure). It
+sits on `observability_internal` and reaches the public internet via the bridge
+NAT; only Prometheus needs to reach it.
+
+**Scrape mechanics** (`prometheus.yml`, job `blackbox`): the standard blackbox
+relabel dance — `metrics_path: /probe`, `params.module: [http_2xx]`, and
+`relabel_configs` copy the target URL into `__param_target`, set `instance` to
+it, then rewrite `__address__` to `blackbox-exporter:9115`. Targets are stamped
+`vps_id=ext` (synthetic, not a fleet host). Current targets:
+`https://app.lokalflash.ch/api/health` and `https://www.lokalflash.ch/` — both
+Cloudflare **DNS-only**, so the probe hits the K8s ingress directly (a real
+origin test). The apex (`lokalflash.ch`) is CF-proxied and deliberately left out
+to avoid alerting on Cloudflare-edge blips.
+
+**Key series:** `probe_success` (1/0) and `probe_ssl_earliest_cert_expiry` (unix
+ts of the earliest cert in the chain).
+
+**Alerting** (`vsa alert`, `problems_from_blackbox` in `services/alerting.py`):
+* **endpoint down** — `max_over_time(probe_success{job="blackbox"}[3m]) == 0`
+  → critical. The `max_over_time` window means *every* scrape in 3 min failed,
+  debouncing a single flaky probe.
+* **cert expiry** — `(probe_ssl_earliest_cert_expiry - time())/86400` < 14d warn,
+  < 3d critical. In healthy operation cert-manager renews ~30 d out, so this
+  never fires unless renewal actually broke — it's a pure backstop.
+
+Both flow through the existing state-diffed email pipe (only on change).
+Thresholds are env-overridable: `VSA_ALERT_CERT_WARN_DAYS` / `_CRIT_DAYS`.
+
+> **Deploy gotcha:** the `vsa` CLI is a **uv tool** install (an isolated,
+> non-editable copy at `~/.local/share/uv/tools/vsa-cli/`), so a `git pull` does
+> **not** update the running alert code. After changing `alerting.py`, reinstall:
+> `uv tool install --force ~/dev/github/VSA/apps/vps-admin-cli`. Compose/Prometheus
+> config changes only need `docker compose up -d blackbox-exporter` +
+> `docker compose restart prometheus` (re-reads the mounted `prometheus.yml`).
 
 ### Loki (`grafana/loki:3.0.0`)
 
