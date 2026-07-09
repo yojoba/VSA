@@ -10,6 +10,7 @@ from vsa.services.alerting import (
     AlertConfig,
     Problem,
     load_state,
+    problems_from_blackbox,
     problems_from_containers,
     problems_from_disk,
     problems_from_drift,
@@ -154,6 +155,57 @@ def test_disk_prometheus_unreachable_is_empty(monkeypatch):
 
     monkeypatch.setattr(alerting.httpx, "get", boom)
     assert problems_from_disk("http://x", warn_percent=85, crit_percent=92, mounts="/") == []
+
+
+# --- blackbox (external synthetic probes) --------------------------------
+
+
+def _blackbox_fake(*, probe_samples, cert_samples):
+    """Fake httpx.get that branches on the PromQL query — probes vs cert."""
+    def _resp(*a, **k):
+        q = k.get("params", {}).get("query", "")
+        if "probe_success" in q:
+            samples = [(i, str(v)) for i, v in probe_samples]
+        elif "probe_ssl_earliest_cert_expiry" in q:
+            samples = [(i, str(v)) for i, v in cert_samples]
+        else:
+            samples = []
+        return _FakeResp({"data": {"result": [
+            {"metric": {"instance": i, "vps_id": "ext", "job": "blackbox"}, "value": [0, v]}
+            for i, v in samples
+        ]}})
+    return _resp
+
+
+def test_blackbox_down_and_cert_thresholds(monkeypatch):
+    monkeypatch.setattr(alerting.httpx, "get", _blackbox_fake(
+        probe_samples=[
+            ("https://app.lokalflash.ch/api/health", 0),  # down (sustained) → critical
+            ("https://www.lokalflash.ch/", 1),            # up → no problem
+        ],
+        cert_samples=[
+            ("https://app.lokalflash.ch/api/health", 2.0),  # <3d → critical
+            ("https://www.lokalflash.ch/", 10.0),           # <14d → warning
+            ("https://other/", 40.0),                       # healthy → no problem
+        ],
+    ))
+    ps = problems_from_blackbox("http://x", cert_warn_days=14, cert_crit_days=3)
+    downs = [p for p in ps if p.category == "endpoint"]
+    certs = {p.target: p for p in ps if p.category == "cert"}
+    assert len(downs) == 1 and downs[0].level == "critical"
+    assert downs[0].target == "https://app.lokalflash.ch/api/health"
+    assert certs["https://app.lokalflash.ch/api/health"].level == "critical"
+    assert certs["https://www.lokalflash.ch/"].level == "warning"
+    assert "https://other/" not in certs   # 40d ahead → no problem
+    assert all(p.vps == "ext" for p in ps)
+
+
+def test_blackbox_prometheus_unreachable_is_empty(monkeypatch):
+    def boom(*a, **k):
+        raise alerting.httpx.ConnectError("refused")
+
+    monkeypatch.setattr(alerting.httpx, "get", boom)
+    assert problems_from_blackbox("http://x", cert_warn_days=14, cert_crit_days=3) == []
 
 
 # --- state ---------------------------------------------------------------

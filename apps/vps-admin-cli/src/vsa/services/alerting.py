@@ -6,6 +6,10 @@ systemd unit, or the shell). Covers two problem families:
 * **certs / drift** — every finding from the hub's ``/fleet/drift`` report.
 * **systems** — agents that stopped reporting (stale ``last_seen``) and
   containers that are down or unhealthy.
+* **disk** — per-VPS/mountpoint usage over threshold (from Prometheus).
+* **external** — synthetic blackbox probes of the public LokalFlash endpoints
+  (uptime + TLS-cert expiry), an off-cluster check that catches edge outages
+  in-cluster error tracking can't see.
 
 A small state file (``alert-state.json``) records the set of currently-firing
 problems so we only email on *changes* (new/escalated problems, or a
@@ -58,6 +62,11 @@ class AlertConfig:
     disk_warn_percent: float = 85.0
     disk_crit_percent: float = 92.0
     disk_mounts: str = "/|/var/lib/docker"  # PromQL regex of mountpoints to watch
+    # External synthetic probes (blackbox_exporter "blackbox" job) — TLS-expiry
+    # thresholds in days. probe_success failures are always critical (no
+    # threshold); these only gate the cert-expiry backstop.
+    cert_warn_days: float = 14.0
+    cert_crit_days: float = 3.0
 
     @classmethod
     def from_env(cls) -> "AlertConfig":
@@ -81,6 +90,8 @@ class AlertConfig:
             disk_warn_percent=float(os.environ.get("VSA_ALERT_DISK_WARN_PERCENT", "85")),
             disk_crit_percent=float(os.environ.get("VSA_ALERT_DISK_CRIT_PERCENT", "92")),
             disk_mounts=os.environ.get("VSA_ALERT_DISK_MOUNTS", "/|/var/lib/docker"),
+            cert_warn_days=float(os.environ.get("VSA_ALERT_CERT_WARN_DAYS", "14")),
+            cert_crit_days=float(os.environ.get("VSA_ALERT_CERT_CRIT_DAYS", "3")),
         )
 
     def validate(self) -> list[str]:
@@ -104,9 +115,9 @@ class AlertConfig:
 @dataclass(frozen=True)
 class Problem:
     level: str       # critical | warning | info
-    category: str    # cert | drift | agent | container
+    category: str    # cert | drift | agent | container | disk | endpoint
     vps: str
-    target: str      # domain / vps_id / container name
+    target: str      # domain / vps_id / container name / probe URL
     detail: str
 
     @property
@@ -243,6 +254,77 @@ def problems_from_disk(
     return out
 
 
+def problems_from_blackbox(
+    prometheus_url: str,
+    *,
+    cert_warn_days: float,
+    cert_crit_days: float,
+    timeout: float = 10.0,
+) -> list[Problem]:
+    """External synthetic-probe alarms for the public LokalFlash endpoints.
+
+    Reads the ``blackbox`` job (blackbox_exporter, scraped by the hub Prometheus)
+    which probes the K8s app + website FROM the hub — an off-cluster vantage. Two
+    checks:
+
+    * **endpoint down** — ``probe_success`` stayed 0 across a full 3-min window
+      (``max_over_time(... [3m]) == 0`` debounces single flaky scrapes). Always
+      critical — a public endpoint is unreachable/erroring.
+    * **cert expiry** — ``probe_ssl_earliest_cert_expiry`` is close. A backstop
+      for cert-manager silently failing to renew; warns at ``cert_warn_days``,
+      critical at ``cert_crit_days``. In healthy operation cert-manager renews
+      ~30 days out, so this never fires unless renewal actually broke.
+
+    Prometheus unreachable → empty list (that path is itself caught by the
+    container-down check), same as ``problems_from_disk``.
+    """
+    def _query(expr: str) -> list[dict[str, Any]]:
+        try:
+            resp = httpx.get(
+                f"{prometheus_url.rstrip('/')}/api/v1/query",
+                params={"query": expr},
+                timeout=timeout,
+            )
+            resp.raise_for_status()
+            return resp.json().get("data", {}).get("result", [])
+        except (httpx.HTTPError, ValueError):
+            return []
+
+    out: list[Problem] = []
+
+    # (1) endpoint down — sustained for a full 3-min window (all scrapes failed).
+    for series in _query('max_over_time(probe_success{job="blackbox"}[3m])'):
+        try:
+            up = float(series["value"][1])
+        except (KeyError, IndexError, ValueError, TypeError):
+            continue
+        if up < 1:
+            target = series.get("metric", {}).get("instance", "?")
+            out.append(Problem(
+                "critical", "endpoint", "ext", target,
+                "endpoint unreachable — external probe failed for ≥3 min",
+            ))
+
+    # (2) TLS cert-expiry backstop (days until earliest cert in the chain expires).
+    for series in _query('(probe_ssl_earliest_cert_expiry{job="blackbox"} - time()) / 86400'):
+        try:
+            days = float(series["value"][1])
+        except (KeyError, IndexError, ValueError, TypeError):
+            continue
+        target = series.get("metric", {}).get("instance", "?")
+        if days < cert_crit_days:
+            out.append(Problem(
+                "critical", "cert", "ext", target,
+                f"TLS cert expires in {days:.0f}d — cert-manager auto-renew may have stalled",
+            ))
+        elif days < cert_warn_days:
+            out.append(Problem(
+                "warning", "cert", "ext", target,
+                f"TLS cert expires in {days:.0f}d",
+            ))
+    return out
+
+
 def collect_problems(cfg: AlertConfig, *, now: datetime | None = None) -> list[Problem]:
     """Query the hub and return all problems at/above ``cfg.min_level``."""
     now = now or datetime.now(timezone.utc)
@@ -259,6 +341,11 @@ def collect_problems(cfg: AlertConfig, *, now: datetime | None = None) -> list[P
         warn_percent=cfg.disk_warn_percent,
         crit_percent=cfg.disk_crit_percent,
         mounts=cfg.disk_mounts,
+    )
+    problems += problems_from_blackbox(
+        cfg.prometheus_url,
+        cert_warn_days=cfg.cert_warn_days,
+        cert_crit_days=cfg.cert_crit_days,
     )
     threshold = _LEVELS.get(cfg.min_level, 1)
     kept = [p for p in problems if _LEVELS.get(p.level, 0) >= threshold]

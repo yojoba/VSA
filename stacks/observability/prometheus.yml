@@ -37,6 +37,32 @@ scrape_configs:
         labels:
           vps_id: vps-01
 
+  # External synthetic probes (blackbox_exporter) of the public LokalFlash
+  # endpoints. These run FROM the hub — off the K8s cluster — so they are a true
+  # external uptime + TLS-expiry check that catches edge outages Sentry can't
+  # see. probe_success + probe_ssl_earliest_cert_expiry feed the `vsa alert`
+  # cron (problems_from_blackbox). vps_id=ext marks them as synthetic (not a
+  # fleet host). app + www are Cloudflare DNS-only → the probe hits the K8s
+  # ingress directly (true origin); apex is CF-proxied so it's left out to avoid
+  # alerting on Cloudflare edge blips.
+  - job_name: blackbox
+    metrics_path: /probe
+    params:
+      module: [http_2xx]
+    static_configs:
+      - targets:
+          - https://app.lokalflash.ch/api/health
+          - https://www.lokalflash.ch/
+        labels:
+          vps_id: ext
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox-exporter:9115
+
   # Example scrape config for application metrics (uncomment and adjust)
   # - job_name: reverse-proxy
   #   static_configs:

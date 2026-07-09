@@ -1,0 +1,25 @@
+# blackbox_exporter modules — external synthetic probes of the public
+# LokalFlash endpoints (K8s app + website). Scraped by Prometheus via the
+# "blackbox" job in prometheus.yml.
+#
+# WHY this lives on the hub: the hub (vps-01) is OFF the K8s cluster, so this is
+# a true external vantage point. It catches full edge outages — ingress down,
+# DNS failure, TLS-cert lapse — that in-cluster error tracking (Sentry) cannot
+# see, because when the edge is dark the app never runs the code that reports.
+modules:
+  # Plain HTTP 200 check over TLS, following redirects. The api /api/health
+  # endpoint pings Postgres and returns non-2xx when the DB is unreachable, so a
+  # simple 2xx check already covers "app + DB healthy". (A body-keyword module —
+  # fail_if_body_not_matches_regexp: ["ok"] — can be added later if we ever see
+  # a 200-with-error-body; not needed today.)
+  http_2xx:
+    prober: http
+    timeout: 8s
+    http:
+      method: GET
+      follow_redirects: true
+      preferred_ip_protocol: ip4
+      fail_if_not_ssl: true          # a plaintext response ⇒ TLS termination broke
+      # valid_status_codes empty ⇒ any 2xx is success.
+      tls_config:
+        insecure_skip_verify: false  # we WANT a probe failure if the cert is invalid

@@ -117,6 +117,21 @@ services:
     networks:
       - observability_internal
 
+  # External synthetic probes of the public LokalFlash endpoints (K8s app +
+  # website). Prometheus scrapes this via the "blackbox" job; blackbox reaches
+  # the public internet through the bridge network's NAT. See blackbox.yml.
+  blackbox-exporter:
+    image: prom/blackbox-exporter:v0.25.0
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/blackbox/blackbox.yml
+    volumes:
+      - ./blackbox.yml:/etc/blackbox/blackbox.yml:ro
+    ports:
+      - "${BLACKBOX_HTTP_PORT:-9115}:9115"
+    networks:
+      - observability_internal
+
 volumes:
   prometheus-data:
     name: obs-prometheus-data
