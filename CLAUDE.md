@@ -284,7 +284,7 @@ containers — at/above `VSA_ALERT_MIN_LEVEL`, and emails a digest. It dedups vi
 `/var/lib/vsa/alert-state.json` so it only emails **on change** (new/escalated
 problem, or full recovery), never spamming. SMTP over STARTTLS, stdlib-only.
 Config in `/etc/vsa/alert.env` (mode 600, gitignored) — currently
-`alarms@lokalflash.ch` via Infomaniak → `alexandre@netcool.ch` +
+`info@lokalflash.ch` via Infomaniak → `alexandre@netcool.ch` +
 `info@flowbiz.ai`, min level `warning`. `vsa alert {status,test,check
 --dry-run}` for ops. Runbook: `docs/runbooks/alerting.md`. To silence a known
 cosmetic-unhealthy container, add its name to `VSA_ALERT_IGNORE_CONTAINERS`.

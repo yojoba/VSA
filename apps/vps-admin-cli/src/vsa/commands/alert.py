@@ -5,9 +5,9 @@ email via SMTP. All config is env-driven (see ``/etc/vsa/alert.env``):
 
     VSA_ALERT_SMTP_HOST=mail.infomaniak.com
     VSA_ALERT_SMTP_PORT=587
-    VSA_ALERT_SMTP_USER=alarms@lokalflash.ch
+    VSA_ALERT_SMTP_USER=info@lokalflash.ch
     VSA_ALERT_SMTP_PASSWORD=********
-    VSA_ALERT_FROM=alarms@lokalflash.ch
+    VSA_ALERT_FROM=info@lokalflash.ch
     VSA_ALERT_TO=alexandre@netcool.ch,info@flowbiz.ai
     VSA_ALERT_MIN_LEVEL=warning            # info | warning | critical
     VSA_ALERT_AGENT_STALE_MINUTES=10

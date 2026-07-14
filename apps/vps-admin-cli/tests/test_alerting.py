@@ -226,12 +226,12 @@ def test_load_missing_state_is_empty(tmp_path: Path):
 
 
 def test_config_from_env(monkeypatch):
-    monkeypatch.setenv("VSA_ALERT_SMTP_USER", "alarms@lokalflash.ch")
+    monkeypatch.setenv("VSA_ALERT_SMTP_USER", "info@lokalflash.ch")
     monkeypatch.setenv("VSA_ALERT_SMTP_PASSWORD", "secret")
     monkeypatch.setenv("VSA_ALERT_TO", "alexandre@netcool.ch, info@flowbiz.ai")
     cfg = AlertConfig.from_env()
     assert cfg.recipients == ["alexandre@netcool.ch", "info@flowbiz.ai"]
-    assert cfg.mail_from == "alarms@lokalflash.ch"  # defaults to user
+    assert cfg.mail_from == "info@lokalflash.ch"  # defaults to user
     assert cfg.validate() == []
 
 
