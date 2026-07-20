@@ -328,6 +328,7 @@ async def remove_vps(
         delete(ContainerSnapshot).where(ContainerSnapshot.vps_id == vps_id)
     )
     await db.execute(delete(TrafficStat).where(TrafficStat.vps_id == vps_id))
+    await db.execute(delete(Certificate).where(Certificate.vps_id == vps_id))
 
     # Delete the node itself
     result = await db.execute(

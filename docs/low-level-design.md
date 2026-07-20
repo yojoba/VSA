@@ -272,7 +272,7 @@ Picks up renewed TLS certificates by reloading NGINX config. Uses Docker socket 
 |-------|---------|--------|
 | `vps_nodes` | Registered VPS instances | Static (one row per VPS) |
 | `domains` | Observed vhosts per VPS (agent-synced) | Slow |
-| `certificates` | Observed certs per VPS, with `sans` JSON column for SAN-aware drift | Slow |
+| `certificates` | Observed certs per VPS, `sans` JSON column for SAN-aware drift; cascade-deleted with the node on `vsa vps remove` (fixed 2026-07-20 - previously orphaned) | Slow |
 | `audit_logs` | Audit trail from remote agents | Moderate |
 | `container_snapshots` | Periodic container state from agents | Replaced on each sync |
 | `traffic_stats` | Aggregated traffic from agents | Moderate |
