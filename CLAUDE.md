@@ -401,10 +401,9 @@ host-only, never committed.
 
 | Domain | Primary | Standbys | Notes |
 | --- | --- | --- | --- |
-| `lokalflash.ch` (+`www`) | vps-02 | vps-03 | DNS-01 on standby; cleaned up rogue vhost on vps-01 |
-| `app.lokalflash.ch` | vps-02 | vps-03 | DNS-01 on standby |
-| `dev.lokalflash.ch` (+`www`) | vps-01 | — | HTTP-01 webroot, CF proxied for apex / DNS-only for www |
 | 18 other flowbiz.ai/.com domains | vps-01 | — | auto-backfilled, all single-host |
+
+> **2026-07-20 - LokalFlash left the fleet.** Prod (`lokalflash.ch` / `www` / `app`) moved to **Kubernetes**; it is **no longer in this registry** and is monitored **off-fleet by the blackbox exporter only** (`vps_id=ext`, uptime + TLS-expiry of app+www, ~55d green). Dead nodes **vps-02 (flowbiz-2)** + **vps-03 (flowbiz-3)** were `vsa vps remove`d and the old **dev** stack (`dev.lokalflash.ch` / `www.dev.lokalflash.ch` - containers, nginx vhosts, LE certs, Cloudflare DNS) fully torn down. Fleet is now **vps-01 only**.
 
 `vsa fleet drift` returns `0 critical, 0 warning, 0 info` after the cleanup.
 
@@ -552,7 +551,7 @@ vsa bootstrap
 # VPS fleet management (registry)
 vsa vps list
 vsa vps add --id vps-02 --hostname myserver --ip 1.2.3.4
-vsa vps remove VPS_ID [-y]
+vsa vps remove VPS_ID [-y]              # cascades domains + certs + snapshots + traffic (certs cascade fixed 2026-07-20)
 
 # Multi-VPS write-side ops (run on the hub; needs VSA_HUB_URL + VSA_HUB_AUTH)
 vsa fleet assign --domain X --primary vps-Y --standbys vps-Z[,vps-W]
