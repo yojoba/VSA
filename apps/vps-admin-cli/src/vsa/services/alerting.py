@@ -38,6 +38,16 @@ _LEVEL_EMOJI = {"info": "🔵", "warning": "🟡", "critical": "🔴"}
 _DEFAULT_STATE_PATH = Path("/var/lib/vsa/alert-state.json")
 
 
+def _read_file(path: str) -> str:
+    if not path:
+        return ""
+    try:
+        return Path(path).read_text().strip()
+    except OSError:
+        return ""
+
+
+
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
@@ -67,6 +77,15 @@ class AlertConfig:
     # threshold); these only gate the cert-expiry backstop.
     cert_warn_days: float = 14.0
     cert_crit_days: float = 3.0
+    # K8s prod backup monitoring (read-only SA against the cluster API).
+    k8s_api: str = ""
+    k8s_token: str = ""
+    k8s_ca_file: str = ""
+    k8s_namespace: str = "lokalflash"
+    k8s_pg_cluster: str = "lokalflash-pg"
+    k8s_config_cronjob: str = "config-backup"
+    db_backup_max_hours: float = 26.0
+    config_backup_max_hours: float = 26.0
 
     @classmethod
     def from_env(cls) -> "AlertConfig":
@@ -92,6 +111,14 @@ class AlertConfig:
             disk_mounts=os.environ.get("VSA_ALERT_DISK_MOUNTS", "/|/var/lib/docker"),
             cert_warn_days=float(os.environ.get("VSA_ALERT_CERT_WARN_DAYS", "14")),
             cert_crit_days=float(os.environ.get("VSA_ALERT_CERT_CRIT_DAYS", "3")),
+            k8s_api=os.environ.get("VSA_ALERT_K8S_API", ""),
+            k8s_token=_read_file(os.environ.get("VSA_ALERT_K8S_TOKEN_FILE", "")),
+            k8s_ca_file=os.environ.get("VSA_ALERT_K8S_CA_FILE", ""),
+            k8s_namespace=os.environ.get("VSA_ALERT_K8S_NAMESPACE", "lokalflash"),
+            k8s_pg_cluster=os.environ.get("VSA_ALERT_K8S_PG_CLUSTER", "lokalflash-pg"),
+            k8s_config_cronjob=os.environ.get("VSA_ALERT_K8S_CONFIG_CRONJOB", "config-backup"),
+            db_backup_max_hours=float(os.environ.get("VSA_ALERT_DB_BACKUP_MAX_HOURS", "26")),
+            config_backup_max_hours=float(os.environ.get("VSA_ALERT_CONFIG_BACKUP_MAX_HOURS", "26")),
         )
 
     def validate(self) -> list[str]:
@@ -325,6 +352,82 @@ def problems_from_blackbox(
     return out
 
 
+def problems_from_k8s_backups(cfg: "AlertConfig", *, now: datetime) -> list["Problem"]:
+    """Backup-freshness alarms read from the prod K8s API (read-only SA).
+
+    Off-cluster proxy for the S3 backup destination: CNPG only sets
+    ``status.lastSuccessfulBackup`` AFTER the barman upload to object storage
+    completes, so it faithfully tracks "a base backup landed in S3". Also checks
+    WAL continuous-archiving (PITR health), last-backup success, and the
+    config-backup CronJob's last successful run.
+
+    API unreachable -> empty list: a cluster/API outage is already caught by the
+    blackbox endpoint probe, so we don't double-alarm here.
+    """
+    if not cfg.k8s_api or not cfg.k8s_token:
+        return []
+    headers = {"Authorization": f"Bearer {cfg.k8s_token}"}
+    verify: Any = cfg.k8s_ca_file or True
+    base = cfg.k8s_api.rstrip("/")
+    ns = cfg.k8s_namespace
+
+    def _get(path: str) -> dict[str, Any] | None:
+        try:
+            r = httpx.get(base + path, headers=headers, verify=verify, timeout=15.0)
+            if r.status_code == 404:
+                return {"__status__": 404}
+            r.raise_for_status()
+            return r.json()
+        except (httpx.HTTPError, ValueError):
+            return None
+
+    out: list[Problem] = []
+
+    # (1) CNPG cluster: last-successful-backup age + WAL archiving + backup success
+    cl = _get(f"/apis/postgresql.cnpg.io/v1/namespaces/{ns}/clusters/{cfg.k8s_pg_cluster}")
+    if cl is None:
+        return []  # API unreachable — blackbox covers cluster-down
+    if cl.get("__status__") == 404:
+        out.append(Problem("critical", "backup", "k8s", cfg.k8s_pg_cluster,
+                           "CNPG cluster not found — DB backups cannot be verified"))
+    else:
+        st = cl.get("status", {})
+        age = _age_minutes(st.get("lastSuccessfulBackup", ""), now=now)
+        if age is None:
+            out.append(Problem("critical", "backup", "k8s", "db-base",
+                               "no successful DB backup recorded"))
+        elif age / 60.0 > cfg.db_backup_max_hours:
+            out.append(Problem("critical", "backup", "k8s", "db-base",
+                               f"DB base backup stale — last {age / 60:.0f}h ago "
+                               f"(threshold {cfg.db_backup_max_hours:.0f}h)"))
+        conds = {c.get("type"): c for c in st.get("conditions", [])}
+        ca = conds.get("ContinuousArchiving")
+        if ca is not None and ca.get("status") == "False":
+            out.append(Problem("critical", "backup", "k8s", "wal-archiving",
+                               f"WAL archiving failing ({ca.get('reason', '')}) — PITR at risk"))
+        lb = conds.get("LastBackupSucceeded")
+        if lb is not None and lb.get("status") == "False":
+            out.append(Problem("critical", "backup", "k8s", "db-base",
+                               f"last DB backup did not succeed ({lb.get('reason', '')})"))
+
+    # (2) config-backup CronJob: last-successful-run age
+    if cfg.k8s_config_cronjob:
+        cj = _get(f"/apis/batch/v1/namespaces/{ns}/cronjobs/{cfg.k8s_config_cronjob}")
+        if cj is not None and cj.get("__status__") == 404:
+            out.append(Problem("warning", "backup", "k8s", "config-backup",
+                               "config-backup CronJob not found"))
+        elif cj is not None:
+            age = _age_minutes(cj.get("status", {}).get("lastSuccessfulTime", ""), now=now)
+            if age is None:
+                out.append(Problem("warning", "backup", "k8s", "config-backup",
+                                   "config backup has never completed"))
+            elif age / 60.0 > cfg.config_backup_max_hours:
+                out.append(Problem("critical", "backup", "k8s", "config-backup",
+                                   f"config backup stale — last {age / 60:.0f}h ago "
+                                   f"(threshold {cfg.config_backup_max_hours:.0f}h)"))
+    return out
+
+
 def collect_problems(cfg: AlertConfig, *, now: datetime | None = None) -> list[Problem]:
     """Query the hub and return all problems at/above ``cfg.min_level``."""
     now = now or datetime.now(timezone.utc)
@@ -347,6 +450,7 @@ def collect_problems(cfg: AlertConfig, *, now: datetime | None = None) -> list[P
         cert_warn_days=cfg.cert_warn_days,
         cert_crit_days=cfg.cert_crit_days,
     )
+    problems += problems_from_k8s_backups(cfg, now=now)
     threshold = _LEVELS.get(cfg.min_level, 1)
     kept = [p for p in problems if _LEVELS.get(p.level, 0) >= threshold]
     kept.sort(key=lambda p: (-_LEVELS.get(p.level, 0), p.category, p.target))
