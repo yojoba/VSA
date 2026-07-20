@@ -251,6 +251,18 @@ through the same `vsa alert` email pipe as the disk check: **endpoint down**
 cert-manager silently failing to renew). No agent or config lives on the K8s
 side — this is entirely hub-side and pull-based.
 
+### K8s Backup Monitoring (read-only cluster API)
+
+The hub also alerts if a LokalFlash **backup goes missing/stale** (DB and
+config). `vsa alert` (`problems_from_k8s_backups`) reads the prod cluster's
+K8s API **read-only** (ServiceAccount `vsa-backup-monitor`, denied secrets):
+a stale CNPG base backup (>26h), broken WAL continuous-archiving (PITR at
+risk), a failed last backup, or a stale/missing `config-backup` CronJob.
+K8s-API rather than S3 by design: no object-store credentials live off-cluster
+(a compromised hub cannot touch backups), and CNPG sets
+`status.lastSuccessfulBackup` only after the barman S3 upload completes, so it
+is a faithful proxy. Same email pipe as blackbox/disk.
+
 ### Multi-VPS Hub-and-Agent
 
 ```

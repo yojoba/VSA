@@ -154,6 +154,19 @@ ts of the earliest cert in the chain).
 Both flow through the existing state-diffed email pipe (only on change).
 Thresholds are env-overridable: `VSA_ALERT_CERT_WARN_DAYS` / `_CRIT_DAYS`.
 
+### K8s Backup Alerting (`problems_from_k8s_backups`)
+
+The same alerter checks LokalFlash **backup freshness** off-cluster by reading
+the prod K8s API read-only (SA `vsa-backup-monitor`, token+CA in
+`/etc/vsa/k8s-backup-monitor.{token,ca.crt}`, root:600). Criticals: CNPG
+`status.lastSuccessfulBackup` older than `VSA_ALERT_DB_BACKUP_MAX_HOURS` (26h);
+condition `ContinuousArchiving=False` (WAL/PITR broken); `LastBackupSucceeded=False`;
+and the `config-backup` CronJob `status.lastSuccessfulTime` older than
+`VSA_ALERT_CONFIG_BACKUP_MAX_HOURS` (missing CronJob = warning). Config via
+`VSA_ALERT_K8S_*`. API unreachable = no alarm (a cluster outage is already caught
+by the blackbox probe). K8s-API not S3: no object-store creds off-cluster;
+`lastSuccessfulBackup` is set only after the barman S3 upload, a faithful proxy.
+
 > **Deploy gotcha:** the `vsa` CLI is a **uv tool** install (an isolated,
 > non-editable copy at `~/.local/share/uv/tools/vsa-cli/`), so a `git pull` does
 > **not** update the running alert code. After changing `alerting.py`, reinstall:
@@ -432,7 +445,7 @@ dify-net (isolated bridge)
 
 - **Service:** `services/alerting.py` — `AlertConfig.from_env()` reads all
   `VSA_ALERT_*`; `collect_problems()` queries `/fleet/drift` + `/vps` +
-  `/containers`; problems carry `(level, category, vps, target, detail)` and a
+  `/containers` + the prod K8s API (backup freshness); problems carry `(level, category, vps, target, detail)` and a
   stable `key` (`category|vps|target|level`).
 - **Severity:** container `(unhealthy)` → warning; container not `Up` and not
   `Exited (0)` → critical; agent `last_seen` older than
