@@ -428,6 +428,142 @@ def problems_from_k8s_backups(cfg: "AlertConfig", *, now: datetime) -> list["Pro
     return out
 
 
+# --- LokalFlash K8s application metrics -------------------------------------
+
+# 🔴 SEULS LES CRONS À CADENCE FIABLE SONT SURVEILLÉS PAR L'ÂGE.
+#
+# Vérifié dans le code du backend le 2026-08-18 : sur les dix boucles de fond,
+# SEPT testent leur porte (heure visée, interrupteur de réglage, IMAP_HOST)
+# *avant* d'appeler `tryCronLock`. Elles n'horodatent donc que lorsqu'elles
+# travaillent vraiment — leur âge est irrégulier PAR CONSTRUCTION, et alerter
+# dessus crierait au loup en permanence (mesuré : `prospect-tunnel` avait 2
+# passages là où `bounce-check`, même cadence de 15 min, en avait 29).
+#
+# Les trois retenues prennent leur verrou à CHAQUE tick, donc leur silence est
+# un vrai signal. `recurring-push` est la plus importante des trois : c'est elle
+# qui envoie les notifications de flash deals — figée, les offres des
+# commerçants n'atteignent plus personne, sans aucune erreur nulle part.
+# Les deux autres servent de témoins : si elles se taisent, ce sont les
+# goroutines de fond qui sont mortes, pas une tâche en particulier.
+_LF_CRON_MAX_AGE_S = {
+    "recurring-push": 900,     # cadence 60 s
+    "device-presence": 900,    # cadence 60 s
+    "bounce-check": 5400,      # cadence 15 min (porte IMAP_HOST, stable si configurée)
+}
+
+
+def problems_from_lokalflash(prometheus_url: str, *, timeout: float = 10.0) -> list[Problem]:
+    """Alarmes applicatives du cluster K8s LokalFlash (job ``lokalflash-k8s``).
+
+    Complète ``problems_from_blackbox`` : celui-là dit « le site répond-il vu du
+    dehors », celui-ci dit ce qui se passe DEDANS — erreurs serveur, latence,
+    réplicas, saturation, tâches de fond figées.
+
+    Toutes les séries décrivent le CLUSTER et non un pod : le scrape passe par
+    l'ingress public et atterrit sur un pod au hasard, donc des compteurs par pod
+    y seraient non monotones (cf. metrics.go côté backend).
+
+    Prometheus injoignable → liste vide, comme les autres familles (ce chemin est
+    couvert par la vérification des conteneurs).
+    """
+    def _q(expr: str) -> list[dict[str, Any]]:
+        try:
+            r = httpx.get(f"{prometheus_url.rstrip('/')}/api/v1/query",
+                          params={"query": expr}, timeout=timeout)
+            r.raise_for_status()
+            return r.json().get("data", {}).get("result", [])
+        except (httpx.HTTPError, ValueError):
+            return []
+
+    def _val(series: dict[str, Any]) -> float | None:
+        try:
+            return float(series["value"][1])
+        except (KeyError, IndexError, ValueError, TypeError):
+            return None
+
+    out: list[Problem] = []
+
+    # (0) MÉTA-ALARME : la cible ne répond plus. Sans elle, une surveillance qui
+    #     tombe est indiscernable d'un système en bonne santé — le pire des deux
+    #     mondes. Fenêtre de 5 min pour absorber un déploiement (rollout ~60 s).
+    seen = _q('max_over_time(up{job="lokalflash-k8s"}[5m])')
+    if seen and all((_val(s) or 0) < 1 for s in seen):
+        out.append(Problem(
+            "warning", "lokalflash", "k8s", "metrics",
+            "métriques applicatives injoignables depuis ≥5 min — surveillance aveugle",
+        ))
+        return out  # inutile d'évaluer le reste : les séries sont périmées.
+
+    # (1) ERREURS SERVEUR — le seul symptôme que l'utilisateur voit vraiment.
+    #     Seuil ABSOLU et non un taux : à faible trafic, 1 erreur sur 2 requêtes
+    #     ferait 50 % et réveillerait pour rien. 10 erreurs en 5 min, c'est ~2 par
+    #     minute soutenues — un vrai incident à ce niveau de trafic.
+    for s_ in _q('sum(sum_over_time(lf_requests_last_minute{class="server_error"}[5m]))'):
+        n = _val(s_)
+        if n is not None and n >= 10:
+            out.append(Problem(
+                "critical", "lokalflash", "k8s", "api-5xx",
+                f"{int(n)} erreurs serveur en 5 min — des utilisateurs reçoivent des échecs",
+            ))
+
+    # (2) LATENCE — palier d'histogramme, pas un centile exact. 2500 signifie que
+    #     5 % des requêtes dépassent 1 s ; 10000 est la valeur convenue pour
+    #     « au-delà du dernier palier », soit plus de 5 s.
+    for s_ in _q('min_over_time(lf_request_duration_ms_p95[5m])'):
+        ms = _val(s_)
+        if ms is None:
+            continue
+        if ms >= 10000:
+            out.append(Problem("critical", "lokalflash", "k8s", "api-latence",
+                               "p95 au-delà de 5 s pendant ≥5 min"))
+        elif ms >= 2500:
+            out.append(Problem("warning", "lokalflash", "k8s", "api-latence",
+                               f"p95 ≥ {int(ms)} ms pendant ≥5 min"))
+
+    # (3) RÉSILIENCE PERDUE — un seul réplica, plus de tolérance de panne. `max`
+    #     sur 5 min : pendant un déploiement le compte oscille, seul un creux
+    #     DURABLE compte.
+    for s_ in _q('max_over_time(lf_cluster_pods[5m])'):
+        n = _val(s_)
+        if n is not None and n < 2:
+            out.append(Problem(
+                "critical", "lokalflash", "k8s", "api-replicas",
+                f"{int(n)} réplica d'API — plus aucune tolérance de panne",
+            ))
+
+    # (4) SATURATION — l'autoscaler est à son plafond. Mesuré le 2026-08-18 : le
+    #     plafond réel est le CPU des NŒUDS (~700 req/s), pas les pods, qui
+    #     étaient à 13 % de leur limite. Cette alarme dit donc « ajoutez un
+    #     nœud », pas « augmentez maxReplicas ». `min` sur 10 min pour ne pas
+    #     réveiller sur une pointe de trafic passagère.
+    for s_ in _q('min_over_time(lf_cluster_pods[10m])'):
+        n = _val(s_)
+        if n is not None and n >= 12:
+            out.append(Problem(
+                "warning", "lokalflash", "k8s", "api-saturation",
+                "autoscaler au plafond (12 réplicas) depuis ≥10 min — "
+                "le goulot est le CPU des nœuds, pas le nombre de pods",
+            ))
+
+    # (5) TÂCHES DE FOND FIGÉES — ce que la console ne sait pas faire.
+    for s_ in _q("lf_cron_last_run_age_seconds"):
+        name = s_.get("metric", {}).get("name", "")
+        limit = _LF_CRON_MAX_AGE_S.get(name)
+        if limit is None:
+            continue  # cadence non fiable : volontairement non surveillé (voir en-tête)
+        age = _val(s_)
+        if age is not None and age > limit:
+            out.append(Problem(
+                "critical", "lokalflash", "k8s", f"cron:{name}",
+                f"aucun passage depuis {int(age // 60)} min "
+                f"(cadence attendue ≤ {limit // 60} min)",
+            ))
+
+    return out
+
+
+
+
 def collect_problems(cfg: AlertConfig, *, now: datetime | None = None) -> list[Problem]:
     """Query the hub and return all problems at/above ``cfg.min_level``."""
     now = now or datetime.now(timezone.utc)
@@ -451,6 +587,7 @@ def collect_problems(cfg: AlertConfig, *, now: datetime | None = None) -> list[P
         cert_crit_days=cfg.cert_crit_days,
     )
     problems += problems_from_k8s_backups(cfg, now=now)
+    problems += problems_from_lokalflash(cfg.prometheus_url)
     threshold = _LEVELS.get(cfg.min_level, 1)
     kept = [p for p in problems if _LEVELS.get(p.level, 0) >= threshold]
     kept.sort(key=lambda p: (-_LEVELS.get(p.level, 0), p.category, p.target))
