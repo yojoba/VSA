@@ -197,9 +197,15 @@ panels.append(ts("Disque des nœuds", [(
     '/ node_filesystem_size_bytes{cluster="pck-vpe3ary",mountpoint="/"})) * 100', "{{instance}}")],
     {"h": 7, "w": 12, "x": 0, "y": y}, unit="percent", maximum=100, decimals=1,
     thresholds=[{"color": "green", "value": None}, {"color": "orange", "value": 88}, {"color": "red", "value": 94}],
-    desc="Le disque système de chaque nœud (21 Go). Plein, il empêche d'écrire les "
-         "journaux et de tirer une image, et fait passer le nœud en pression disque — "
-         "le kubelet se met alors à évincer des pods."))
+    desc="🔴 **~80 % EST LE PLANCHER NORMAL, PAS UNE ALERTE.** Le kubelet est réglé "
+         "avec `imageGCLowThreshold=80` et `imageGCHigh=85` (valeurs relevées sur ce "
+         "cluster) : au-dessus de 85 % il supprime les images inutilisées et redescend "
+         "à 80 %. Le disque se STABILISE donc à 80 % par conception — un chiffre qu'on "
+         "lirait à tort comme « bientôt plein ». Ce qui doit inquiéter, c'est de VOIR "
+         "MONTER durablement au-dessus de 85 % : cela signifie que le nettoyage "
+         "automatique n'arrive plus à suivre. D'où le seuil d'alerte à 88 %, entre la "
+         "récupération d'images (85 %) et l'éviction de pods (90 %). Disques de 19,5 Go, "
+         "occupés à ~14,7 Go — l'essentiel étant les images de conteneurs."))
 
 # 🔴 LES VOLUMES PERSISTANTS SONT LES DISQUES QUI COMPTENT LE PLUS ICI, et leur
 # occupation ne vient QUE du kubelet : kube-state-metrics les inventorie sans
