@@ -1,0 +1,1235 @@
+{
+  "uid": "lokalflash-k8s",
+  "title": "LokalFlash — Production K8s",
+  "tags": [
+    "lokalflash",
+    "k8s",
+    "production"
+  ],
+  "timezone": "Europe/Zurich",
+  "schemaVersion": 39,
+  "version": 0,
+  "refresh": "30s",
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "editable": true,
+  "graphTooltip": 1,
+  "description": "Production LokalFlash sur Kubernetes (Infomaniak DC3, cluster pck-vpe3ary). Deux sources : les métriques applicatives des pods api (/_/metrics, décrivant le CLUSTER et non un pod) et les sondes externes depuis ce hub. 🔴 NON VISIBLE ICI : le CPU des nœuds Kubernetes (il vit dans metrics-server, pas dans Prometheus) — or c'est lui qui borne la capacité. La rangée ② contourne ce trou en rapportant le débit au plafond MESURÉ. Les journaux du cluster ne sont pas dans Loki non plus (il ne collecte que vps-01). Généré par build_lokalflash_dashboard.py — ne pas éditer à la main, les modifications seraient perdues à la prochaine génération.",
+  "panels": [
+    {
+      "id": 1,
+      "type": "row",
+      "title": "① État — la vue de dix secondes",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Application",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 0,
+        "y": 1
+      },
+      "description": "Sonde externe depuis ce hub, hors cluster : la seule qui voie une panne de bord (ingress, DNS, TLS). Sentry, lui, ne peut rien voir d'un bord éteint.",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vsa-prometheus"
+          },
+          "expr": "probe_success{instance=\"https://app.lokalflash.ch/api/health\"}",
+          "legendFormat": "",
+          "instant": true,
+          "range": false,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "mappings": [
+            {
+              "options": {
+                "0": {
+                  "text": "HORS SERVICE",
+                  "color": "red",
+                  "index": 0
+                }
+              },
+              "type": "value"
+            },
+            {
+              "options": {
+                "1": {
+                  "text": "en ligne",
+                  "color": "green",
+                  "index": 1
+                }
+              },
+              "type": "value"
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "textMode": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      }
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Site vitrine",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 4,
+        "y": 1
+      },
+      "description": "",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vsa-prometheus"
+          },
+          "expr": "probe_success{instance=\"https://www.lokalflash.ch/\"}",
+          "legendFormat": "",
+          "instant": true,
+          "range": false,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "mappings": [
+            {
+              "options": {
+                "0": {
+                  "text": "HORS SERVICE",
+                  "color": "red",
+                  "index": 0
+                }
+              },
+              "type": "value"
+            },
+            {
+              "options": {
+                "1": {
+                  "text": "en ligne",
+                  "color": "green",
+                  "index": 1
+                }
+              },
+              "type": "value"
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "textMode": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      }
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Erreurs serveur (1 h)",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 8,
+        "y": 1
+      },
+      "description": "Des utilisateurs ont reçu un échec. L'alerte se déclenche à 10 sur 5 min — seuil ABSOLU et non un taux : à faible trafic, 1 erreur sur 2 requêtes ferait 50 %.",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vsa-prometheus"
+          },
+          "expr": "sum(sum_over_time(lf_requests_last_minute{class=\"server_error\"}[1h])) or vector(0)",
+          "legendFormat": "",
+          "instant": true,
+          "range": false,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 1
+              },
+              {
+                "color": "red",
+                "value": 10
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "textMode": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      }
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Réplicas d'API",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 12,
+        "y": 1
+      },
+      "description": "3 au repos, jusqu'à 12 par l'autoscaler. Sous 2 : plus de tolérance de panne. À 12 : le plafond de l'autoscaler est atteint — mais le vrai goulot est le CPU des nœuds.",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vsa-prometheus"
+          },
+          "expr": "lf_cluster_pods",
+          "legendFormat": "",
+          "instant": true,
+          "range": false,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 2
+              },
+              {
+                "color": "green",
+                "value": 3
+              },
+              {
+                "color": "orange",
+                "value": 12
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "textMode": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      }
+    },
+    {
+      "id": 6,
+      "type": "stat",
+      "title": "Certificat TLS",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 16,
+        "y": 1
+      },
+      "description": "Filet de sécurité : cert-manager renouvelle ~30 jours avant. Ne descend que si le renouvellement est réellement cassé.",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vsa-prometheus"
+          },
+          "expr": "(min(probe_ssl_earliest_cert_expiry) - time()) / 86400",
+          "legendFormat": "",
+          "instant": true,
+          "range": false,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "d",
+          "decimals": 0,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 3
+              },
+              {
+                "color": "green",
+                "value": 14
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "textMode": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      }
+    },
+    {
+      "id": 7,
+      "type": "stat",
+      "title": "Tâche de fond la plus silencieuse",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 20,
+        "y": 1
+      },
+      "description": "⚠️ Toutes les tâches n'ont PAS la même cadence : certaines sont journalières, donc une valeur de plusieurs heures est normale. Voir le tableau détaillé plus bas.",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vsa-prometheus"
+          },
+          "expr": "max(lf_cron_last_run_age_seconds)",
+          "legendFormat": "",
+          "instant": true,
+          "range": false,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "decimals": 0,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 3600
+              },
+              {
+                "color": "red",
+                "value": 90000
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "textMode": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      }
+    },
+    {
+      "id": 8,
+      "type": "row",
+      "title": "② Capacité — à quelle distance du plafond ?",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 5
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 9,
+      "type": "gauge",
+      "title": "Part de la capacité mesurée",
+      "gridPos": {
+        "h": 7,
+        "w": 6,
+        "x": 0,
+        "y": 6
+      },
+      "description": "Débit rapporté au plafond MESURÉ de ~700 req/s (k6 depuis ce hub, chemin public complet, 2026-08-18). Le plafond est le CPU des NŒUDS : à saturation un nœud était à 99 % pendant que les pods api restaient à 13 % de leur limite. **Ajouter des réplicas ne le déplacerait pas — seul un troisième nœud le ferait.** Au-delà de 75 % durablement, c'est le moment d'en reparler.",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vsa-prometheus"
+          },
+          "expr": "lf_cluster_requests_per_second / 700 * 100",
+          "legendFormat": "",
+          "instant": true,
+          "range": false,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "decimals": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 50
+              },
+              {
+                "color": "orange",
+                "value": 75
+              },
+              {
+                "color": "red",
+                "value": 90
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true,
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      }
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Requêtes par seconde",
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 6,
+        "y": 6
+      },
+      "description": "La ligne rouge marque le plafond mesuré (700 req/s). Instantané, sommé sur tous les réplicas via Valkey.",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vsa-prometheus"
+          },
+          "expr": "lf_cluster_requests_per_second",
+          "legendFormat": "cluster",
+          "instant": false,
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 12,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "gradientMode": "opacity",
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "decimals": 2,
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 700
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 11,
+      "type": "stat",
+      "title": "Pic sur la période",
+      "gridPos": {
+        "h": 7,
+        "w": 6,
+        "x": 18,
+        "y": 6
+      },
+      "description": "C'est le PIC qui dimensionne, pas la moyenne. Le scénario à surveiller est l'envoi d'une notification de flash deal : tout le monde ouvre l'app en même temps.",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vsa-prometheus"
+          },
+          "expr": "max_over_time(lf_cluster_requests_per_second[$__range])",
+          "legendFormat": "",
+          "instant": true,
+          "range": false,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "decimals": 1,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 350.0
+              },
+              {
+                "color": "red",
+                "value": 525.0
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "textMode": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      }
+    },
+    {
+      "id": 12,
+      "type": "row",
+      "title": "③ Latence — ce que ressent l'utilisateur",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 13
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 13,
+      "type": "timeseries",
+      "title": "Latence perçue de l'extérieur",
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 14
+      },
+      "description": "Mesure de bout en bout depuis ce hub : réseau, LoadBalancer, TLS et application compris. C'est la seule courbe qui dise ce que vit vraiment quelqu'un qui ouvre l'app.",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vsa-prometheus"
+          },
+          "expr": "probe_duration_seconds{instance=\"https://app.lokalflash.ch/api/health\"} * 1000",
+          "legendFormat": "application",
+          "instant": false,
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vsa-prometheus"
+          },
+          "expr": "probe_duration_seconds{instance=\"https://www.lokalflash.ch/\"} * 1000",
+          "legendFormat": "site vitrine",
+          "instant": false,
+          "range": true,
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 12,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "gradientMode": "opacity"
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 14,
+      "type": "timeseries",
+      "title": "Latence côté serveur",
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 14
+      },
+      "description": "🔴 Le p95 est un PALIER d'histogramme, pas un centile exact : il saute de 250 à 500 à 1000 ms. La valeur 10000 signifie « au-delà du dernier palier », soit plus de 5 s. Le flux temps réel (SSE) est EXCLU de ces deux courbes : ses connexions durent des minutes et rendraient la moyenne illisible pour toujours.",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vsa-prometheus"
+          },
+          "expr": "lf_request_duration_ms_p95",
+          "legendFormat": "p95 (palier)",
+          "instant": false,
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vsa-prometheus"
+          },
+          "expr": "avg(lf_request_duration_ms_avg)",
+          "legendFormat": "moyenne, toutes routes",
+          "instant": false,
+          "range": true,
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 12,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "gradientMode": "opacity",
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 2500
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 15,
+      "type": "row",
+      "title": "④ Trafic — d'où vient la charge",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 21
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 16,
+      "type": "timeseries",
+      "title": "Requêtes par famille de route",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 22
+      },
+      "description": "Les chemins sont regroupés en familles FERMÉES : stocker les URL brutes créerait une série par identifiant d'offre. « sonde » domine normalement (santé Kubernetes + sonde externe toutes les 15 s) — ce n'est pas du trafic d'utilisateurs.",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vsa-prometheus"
+          },
+          "expr": "sum by (route) (lf_requests_last_minute) / 60",
+          "legendFormat": "{{route}}",
+          "instant": false,
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 12,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            },
+            "gradientMode": "opacity"
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "decimals": 2,
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 17,
+      "type": "timeseries",
+      "title": "Erreurs",
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 12,
+        "y": 22
+      },
+      "description": "Les 4xx sont ATTENDUS (droits refusés, ressource absente, pré-vols CORS). Seuls les 5xx sont un incident.",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vsa-prometheus"
+          },
+          "expr": "sum(lf_requests_last_minute{class=\"server_error\"})",
+          "legendFormat": "serveur (5xx)",
+          "instant": false,
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vsa-prometheus"
+          },
+          "expr": "sum(lf_requests_last_minute{class=\"client_error\"})",
+          "legendFormat": "refus / non trouvés (4xx)",
+          "instant": false,
+          "range": true,
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 12,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "gradientMode": "opacity"
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 18,
+      "type": "timeseries",
+      "title": "Connexions temps réel",
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 18,
+        "y": 22
+      },
+      "description": "Flux SSE ouverts sur tout le cluster — proche du nombre d'applications ouvertes sur un écran. ⚠️ Anonyme : le flux n'exige aucune authentification, donc trois onglets comptent trois. Pour savoir QUI est là, voir l'onglet Audience de /_/stats.",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vsa-prometheus"
+          },
+          "expr": "lf_cluster_realtime_connections",
+          "legendFormat": "flux SSE ouverts",
+          "instant": false,
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 12,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "gradientMode": "opacity"
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 19,
+      "type": "row",
+      "title": "⑤ Tâches de fond et base de données",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 30
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 20,
+      "type": "table",
+      "title": "Dernier passage de chaque tâche de fond",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 31
+      },
+      "description": "🔴 SEULES TROIS TÂCHES SONT SURVEILLÉES PAR L'ÂGE, et c'est délibéré : sur les dix boucles, sept testent leur porte (heure visée, interrupteur de réglage, IMAP_HOST) AVANT de prendre leur verrou — elles n'horodatent donc que lorsqu'elles travaillent, et leur âge est irrégulier PAR CONSTRUCTION. Les trois fiables : recurring-push et device-presence (cadence 1 min), bounce-check (15 min). **recurring-push est la plus importante : figée, les notifications de flash deals n'atteignent plus personne, sans erreur nulle part.** Les autres lignes sont informatives ; une valeur de plusieurs heures y est normale.",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vsa-prometheus"
+          },
+          "expr": "lf_cron_last_run_age_seconds",
+          "legendFormat": "",
+          "instant": true,
+          "range": false,
+          "refId": "A"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "job": true,
+              "instance": true,
+              "vps_id": true,
+              "cluster": true,
+              "__name__": true
+            },
+            "renameByName": {
+              "name": "Tâche de fond",
+              "Value": "Depuis le dernier passage"
+            }
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "color-text"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 900
+              },
+              {
+                "color": "red",
+                "value": 5400
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "sortBy": [
+          {
+            "desc": true,
+            "displayName": "Depuis le dernier passage"
+          }
+        ]
+      }
+    },
+    {
+      "id": 21,
+      "type": "timeseries",
+      "title": "Pool de connexions Postgres",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 31
+      },
+      "description": "⚠️ Seule mesure LOCALE du tableau : elle décrit le pod qui a répondu au scrape, pas le cluster. Elle saute donc d'un pod à l'autre — utile pour repérer une saturation durable, pas pour lire une valeur exacte. Le pool traverse PgBouncer (mode transaction).",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vsa-prometheus"
+          },
+          "expr": "lf_pod_db_pool_connections{state=\"acquired\"}",
+          "legendFormat": "en cours d'utilisation",
+          "instant": false,
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vsa-prometheus"
+          },
+          "expr": "lf_pod_db_pool_connections{state=\"max\"}",
+          "legendFormat": "maximum",
+          "instant": false,
+          "range": true,
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 12,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "gradientMode": "opacity"
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    }
+  ]
+}

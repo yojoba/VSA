@@ -1,0 +1,26 @@
+# Provisionnement par FICHIER du tableau de bord LokalFlash.
+#
+# 🔴 POURQUOI PAR FICHIER ET NON PAR L'API. Les deux tableaux plus anciens
+# (fleet-overview, electroziles) ont été poussés par l'API avec le mot de passe
+# admin — lequel a été changé depuis le premier démarrage, si bien qu'il n'est
+# plus dans l'environnement du conteneur et qu'aucun identifiant ne fonctionne.
+# Le provisionnement par fichier n'en demande aucun, se versionne dans le dépôt,
+# et SURVIT à une perte du volume Grafana (grafana.db), ce qu'un tableau poussé
+# par l'API ne fait pas.
+#
+# `allowUiUpdates: false` : le tableau est GÉNÉRÉ par
+# build_lokalflash_dashboard.py. Une modification faite à la souris serait
+# écrasée à la génération suivante — autant que Grafana l'interdise franchement
+# plutôt que de laisser croire qu'elle tiendra.
+apiVersion: 1
+providers:
+  - name: lokalflash
+    orgId: 1
+    folder: LokalFlash
+    type: file
+    disableDeletion: false
+    allowUiUpdates: false
+    updateIntervalSeconds: 60
+    options:
+      path: /etc/grafana/provisioning/dashboards/lokalflash
+      foldersFromFilesStructure: false
