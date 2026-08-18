@@ -69,6 +69,9 @@ services:
       - --web.enable-remote-write-receiver
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      # Jeton porteur du scrape LokalFlash /_/metrics. Vit dans /etc/vsa
+      # (root:65534, 0640) et JAMAIS dans ce depot : un secret ne se versionne pas.
+      - /etc/vsa/lokalflash-metrics.token:/etc/prometheus/lokalflash-metrics.token:ro
       - prometheus-data:/prometheus
     ports:
       - "${PROMETHEUS_HTTP_PORT:-9090}:9090"

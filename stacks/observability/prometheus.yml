@@ -63,6 +63,34 @@ scrape_configs:
       - target_label: __address__
         replacement: blackbox-exporter:9115
 
+  # Metriques applicatives du cluster K8s LokalFlash (pods api, via l'ingress).
+  # Complete le job blackbox ci-dessus : celui-la dit "le site repond-il vu du
+  # dehors", celui-ci dit CE QUI SE PASSE DEDANS (req/s par famille de route,
+  # latence, taux d'erreur, connexions temps reel, pool Postgres).
+  #
+  # Authentification par JETON PORTEUR dedie (ni compte admin, ni secret JWT),
+  # lu depuis un fichier monte hors depot. La route est ETEINTE cote serveur
+  # tant qu'aucun jeton n'est configure : elle repond alors 404, sans meme
+  # confirmer son existence.
+  #
+  # Le contenu expose est STRICTEMENT de l'infrastructure : aucune donnee
+  # personnelle, aucun chiffre metier (ceux-la restent derriere admin+2FA sur
+  # la console /_/stats).
+  #
+  # NB : le scrape traverse l'ingress public (pas de reseau prive entre le hub
+  # et le cluster), d'ou le jeton plutot qu'une simple liste blanche d'IP --
+  # laquelle serait de toute facon inoperante tant que le LoadBalancer est en
+  # externalTrafficPolicy=Cluster (il masque l'IP source).
+  - job_name: lokalflash-k8s
+    scheme: https
+    metrics_path: /_/metrics
+    bearer_token_file: /etc/prometheus/lokalflash-metrics.token
+    static_configs:
+      - targets: ["app.lokalflash.ch"]
+        labels:
+          vps_id: ext
+          cluster: pck-vpe3ary
+
   # Example scrape config for application metrics (uncomment and adjust)
   # - job_name: reverse-proxy
   #   static_configs:
