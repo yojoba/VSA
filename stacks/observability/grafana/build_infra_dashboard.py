@@ -192,6 +192,43 @@ panels.append(ts("Mémoire par nœud", [(
          "C'est elle qui limitera en premier le nombre de pods qu'on peut ajouter."))
 y += 8
 
+panels.append(ts("Disque des nœuds", [(
+    '(1 - (node_filesystem_avail_bytes{cluster="pck-vpe3ary",mountpoint="/"} '
+    '/ node_filesystem_size_bytes{cluster="pck-vpe3ary",mountpoint="/"})) * 100', "{{instance}}")],
+    {"h": 7, "w": 12, "x": 0, "y": y}, unit="percent", maximum=100, decimals=1,
+    thresholds=[{"color": "green", "value": None}, {"color": "orange", "value": 88}, {"color": "red", "value": 94}],
+    desc="Le disque système de chaque nœud (21 Go). Plein, il empêche d'écrire les "
+         "journaux et de tirer une image, et fait passer le nœud en pression disque — "
+         "le kubelet se met alors à évincer des pods."))
+
+# 🔴 LES VOLUMES PERSISTANTS SONT LES DISQUES QUI COMPTENT LE PLUS ICI, et leur
+# occupation ne vient QUE du kubelet : kube-state-metrics les inventorie sans
+# jamais dire ce qu'ils contiennent. Sans ce panneau, un volume qui se remplit
+# n'apparaîtrait sur AUCUN écran — or MinIO a déjà perdu tous ses envois une fois
+# (2026-06-12), et une saturation du registre bloque TOUT déploiement en
+# corrompant l'image au push.
+panels.append({
+    "id": nid(), "type": "bargauge", "title": "Volumes persistants — occupation",
+    "gridPos": {"h": 7, "w": 12, "x": 12, "y": y}, "datasource": DS,
+    "description": "MinIO porte les photos de commerces et d'offres ; `website-cms` le "
+                   "contenu du site ; `lokalflash-pg-*` les données. ⚠️ `registry-data` "
+                   "mérite une attention particulière : saturé, il bloque TOUT déploiement "
+                   "ET corrompt l'image au moment du push — d'où le nettoyage hebdomadaire "
+                   "du dimanche 04 h.",
+    "targets": [t('(kubelet_volume_stats_used_bytes / kubelet_volume_stats_capacity_bytes) * 100',
+                  "{{persistentvolumeclaim}}", instant=True)],
+    "fieldConfig": {"defaults": {
+        "unit": "percent", "min": 0, "max": 100, "decimals": 1,
+        "thresholds": {"mode": "absolute", "steps": [
+            {"color": "green", "value": None}, {"color": "orange", "value": 75},
+            {"color": "red", "value": 88}]},
+        "color": {"mode": "thresholds"}}, "overrides": []},
+    "options": {"displayMode": "gradient", "orientation": "horizontal",
+                "showUnfilled": True,
+                "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": False}},
+})
+y += 7
+
 # ══ RANGÉE 3 : DRILL-DOWN ════════════════════════════════════════════════════
 panels.append(row("③ Drill-down — chaque pod, chaque conteneur", y)); y += 1
 panels.append(tbl("Pods — état, redémarrages, nœud",

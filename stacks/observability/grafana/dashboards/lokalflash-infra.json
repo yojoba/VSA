@@ -1098,26 +1098,181 @@
     },
     {
       "id": 17,
+      "type": "timeseries",
+      "title": "Disque des nœuds",
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 19
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vsa-prometheus"
+      },
+      "description": "Le disque système de chaque nœud (21 Go). Plein, il empêche d'écrire les journaux et de tirer une image, et fait passer le nœud en pression disque — le kubelet se met alors à évincer des pods.",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vsa-prometheus"
+          },
+          "expr": "(1 - (node_filesystem_avail_bytes{cluster=\"pck-vpe3ary\",mountpoint=\"/\"} / node_filesystem_size_bytes{cluster=\"pck-vpe3ary\",mountpoint=\"/\"})) * 100",
+          "legendFormat": "{{instance}}",
+          "instant": false,
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 12,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "gradientMode": "opacity",
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "max": 100,
+          "decimals": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 88
+              },
+              {
+                "color": "red",
+                "value": 94
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 18,
+      "type": "bargauge",
+      "title": "Volumes persistants — occupation",
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 19
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vsa-prometheus"
+      },
+      "description": "MinIO porte les photos de commerces et d'offres ; `website-cms` le contenu du site ; `lokalflash-pg-*` les données. ⚠️ `registry-data` mérite une attention particulière : saturé, il bloque TOUT déploiement ET corrompt l'image au moment du push — d'où le nettoyage hebdomadaire du dimanche 04 h.",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vsa-prometheus"
+          },
+          "expr": "(kubelet_volume_stats_used_bytes / kubelet_volume_stats_capacity_bytes) * 100",
+          "legendFormat": "{{persistentvolumeclaim}}",
+          "instant": true,
+          "range": false,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "decimals": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 75
+              },
+              {
+                "color": "red",
+                "value": 88
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "displayMode": "gradient",
+        "orientation": "horizontal",
+        "showUnfilled": true,
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      }
+    },
+    {
+      "id": 19,
       "type": "row",
       "title": "③ Drill-down — chaque pod, chaque conteneur",
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 19
+        "y": 26
       },
       "collapsed": false,
       "panels": []
     },
     {
-      "id": 18,
+      "id": 20,
       "type": "table",
       "title": "Pods — état, redémarrages, nœud",
       "gridPos": {
         "h": 11,
         "w": 24,
         "x": 0,
-        "y": 20
+        "y": 27
       },
       "datasource": {
         "type": "prometheus",
@@ -1328,14 +1483,14 @@
       }
     },
     {
-      "id": 19,
+      "id": 21,
       "type": "timeseries",
       "title": "CPU par pod",
       "gridPos": {
         "h": 9,
         "w": 12,
         "x": 0,
-        "y": 31
+        "y": 38
       },
       "datasource": {
         "type": "prometheus",
@@ -1395,14 +1550,14 @@
       }
     },
     {
-      "id": 20,
+      "id": 22,
       "type": "timeseries",
       "title": "Mémoire par pod",
       "gridPos": {
         "h": 9,
         "w": 12,
         "x": 12,
-        "y": 31
+        "y": 38
       },
       "datasource": {
         "type": "prometheus",
@@ -1461,27 +1616,27 @@
       }
     },
     {
-      "id": 21,
+      "id": 23,
       "type": "row",
       "title": "④ Ce qui ne va pas — trié par anomalie",
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 40
+        "y": 47
       },
       "collapsed": false,
       "panels": []
     },
     {
-      "id": 22,
+      "id": 24,
       "type": "table",
       "title": "Charges de travail incomplètes",
       "gridPos": {
         "h": 7,
         "w": 12,
         "x": 0,
-        "y": 41
+        "y": 48
       },
       "datasource": {
         "type": "prometheus",
@@ -1559,14 +1714,14 @@
       }
     },
     {
-      "id": 23,
+      "id": 25,
       "type": "timeseries",
       "title": "Redémarrages de conteneurs",
       "gridPos": {
         "h": 7,
         "w": 12,
         "x": 12,
-        "y": 41
+        "y": 48
       },
       "datasource": {
         "type": "prometheus",

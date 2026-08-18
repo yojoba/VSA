@@ -590,6 +590,16 @@ _NODE_MEM = ('avg_over_time(((1 - (node_memory_MemAvailable_bytes{' + _K8S + '}'
              ' / node_memory_MemTotal_bytes{' + _K8S + '})) * 100)[10m:1m]) > 88')
 _NODE_DISK = ('(1 - (node_filesystem_avail_bytes{' + _K8S + ',mountpoint="/"}'
               ' / node_filesystem_size_bytes{' + _K8S + ',mountpoint="/"})) * 100 > 88')
+# 🔴 UN VOLUME PERSISTANT PLEIN EST PLUS GRAVE QU'UN DISQUE DE NŒUD PLEIN, ici.
+# Le disque d'un nœud se libère (journaux, images) ; un volume plein, lui, fait
+# ÉCHOUER DES ÉCRITURES MÉTIER — une photo de commerce qu'on ne peut plus
+# enregistrer, une page du site qu'on ne peut plus publier, une transaction
+# Postgres qui s'arrête. Seuil plus bas (80 %) parce qu'un volume ne se vide pas
+# tout seul : il faut agrandir ou nettoyer, et ça prend du temps qu'il vaut mieux
+# avoir devant soi. `registry-data` est le cas le plus vicieux : saturé, il
+# bloque TOUT déploiement en corrompant l'image au push.
+_PVC_FULL = ('(kubelet_volume_stats_used_bytes / kubelet_volume_stats_capacity_bytes)'
+             ' * 100 > 80')
 
 
 def problems_from_k8s_cluster(prometheus_url: str, *, timeout: float = 10.0) -> list[Problem]:
@@ -684,6 +694,18 @@ def problems_from_k8s_cluster(prometheus_url: str, *, timeout: float = 10.0) -> 
         pct = _val(item) or 0
         out.append(Problem("critical" if pct > 94 else "warning", "k8s", "cluster",
                            "noeud-disque:" + node, "disque à %d %%" % int(pct)))
+
+    # (7) VOLUMES PERSISTANTS. Ce sont les disques qui portent le métier :
+    #     photos de commerces (MinIO), contenu du site (CMS), données Postgres,
+    #     images du registre. Leur occupation ne vient QUE du kubelet.
+    for item in _q(_PVC_FULL):
+        m = item.get("metric", {})
+        pvc = m.get("persistentvolumeclaim", "?")
+        pct = _val(item) or 0
+        out.append(Problem("critical" if pct > 90 else "warning", "k8s", "cluster",
+                           "volume:" + pvc,
+                           "volume occupé à %d %% — un volume plein fait échouer des "
+                           "écritures, et ne se vide pas tout seul" % int(pct)))
 
     return out
 
