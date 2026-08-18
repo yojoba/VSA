@@ -564,6 +564,132 @@ def problems_from_lokalflash(prometheus_url: str, *, timeout: float = 10.0) -> l
 
 
 
+# --- LokalFlash K8s cluster infrastructure ----------------------------------
+
+# 🔴 CE FILTRE N'EST PAS DÉCORATIF. Le hub fait tourner SON PROPRE node-exporter
+# et SON PROPRE cAdvisor, qui produisent EXACTEMENT les mêmes noms de métriques
+# (`node_cpu_seconds_total`, `container_memory_working_set_bytes`…). Sans ce
+# sélecteur, chaque règle ci-dessous alerterait aussi sur flowbiz-1 lui-même, et
+# on ne saurait pas lequel des deux parle. Vérifié le 2026-08-18 : 32 séries CPU
+# sans étiquette `cluster` (le hub) contre 64 avec (nos deux nœuds).
+_K8S = 'cluster="pck-vpe3ary"'
+
+# 🔴 Expressions construites par CONCATÉNATION et non par f-string. PromQL est
+# fait d'accolades ; en f-string il faut toutes les doubler et échapper les
+# guillemets, ce qui rend les requêtes illisibles et casse au moindre oubli
+# (trois erreurs de suite en les écrivant ainsi le 2026-08-18). Ici, ce qu'on lit
+# est exactement ce qui part à Prometheus.
+_RESTARTS = 'sum by (pod) (increase(kube_pod_container_status_restarts_total{' + _K8S + '}[30m])) >= 3'
+_WORKLOAD = ('min_over_time((kube_deployment_status_replicas_ready{' + _K8S + '}'
+             ' - kube_deployment_spec_replicas{' + _K8S + '})[10m:1m]) < 0')
+_PENDING = ('min_over_time((kube_pod_status_phase{' + _K8S + ',phase="Pending"} == 1)'
+            '[15m:1m]) == 1')
+_NODE_CPU = ('avg_over_time((100 - (avg by (instance) (rate(node_cpu_seconds_total{'
+             + _K8S + ',mode="idle"}[5m])) * 100))[15m:1m]) > 90')
+_NODE_MEM = ('avg_over_time(((1 - (node_memory_MemAvailable_bytes{' + _K8S + '}'
+             ' / node_memory_MemTotal_bytes{' + _K8S + '})) * 100)[10m:1m]) > 88')
+_NODE_DISK = ('(1 - (node_filesystem_avail_bytes{' + _K8S + ',mountpoint="/"}'
+              ' / node_filesystem_size_bytes{' + _K8S + ',mountpoint="/"})) * 100 > 88')
+
+
+def problems_from_k8s_cluster(prometheus_url: str, *, timeout: float = 10.0) -> list[Problem]:
+    """Alarmes d'INFRASTRUCTURE du cluster K8s (kube-state-metrics, node-exporter).
+
+    Complète les deux familles voisines : ``problems_from_blackbox`` dit « le site
+    répond-il vu du dehors », ``problems_from_lokalflash`` dit « l'application
+    va-t-elle bien », celle-ci dit « la machine en dessous tient-elle debout ».
+
+    Les données arrivent par ``remote_write`` depuis un agent qui tourne DANS le
+    cluster (deploy/monitoring/) — le hub ne scrape rien à l'intérieur.
+
+    Prometheus injoignable → liste vide, comme les autres familles.
+    """
+    def _q(expr):
+        try:
+            r = httpx.get(prometheus_url.rstrip("/") + "/api/v1/query",
+                          params={"query": expr}, timeout=timeout)
+            r.raise_for_status()
+            return r.json().get("data", {}).get("result", [])
+        except (httpx.HTTPError, ValueError):
+            return []
+
+    def _val(item):
+        try:
+            return float(item["value"][1])
+        except (KeyError, IndexError, ValueError, TypeError):
+            return None
+
+    out = []
+
+    # (0) MÉTA-ALARME. Si l'agent du cluster cesse de pousser, toutes les règles
+    #     ci-dessous deviennent muettes — et le silence ressemblerait à la santé.
+    #     `absent()` ne rend une série que lorsqu'il n'y a AUCUN échantillon.
+    if _q("absent(kube_pod_info{" + _K8S + "})"):
+        out.append(Problem(
+            "warning", "k8s", "cluster", "inventaire",
+            "aucune métrique d'infrastructure reçue — l'agent du cluster ne pousse plus, "
+            "la surveillance de la machine est aveugle",
+        ))
+        return out  # les autres règles porteraient sur des données périmées.
+
+    # (1) REDÉMARRAGES EN BOUCLE — le défaut qui ne lève aucune erreur ailleurs.
+    #     Seuil à 3 en 30 min : un redémarrage isolé est normal (déploiement,
+    #     dépassement mémoire ponctuel), trois est une boucle.
+    for item in _q(_RESTARTS):
+        pod = item.get("metric", {}).get("pod", "?")
+        out.append(Problem("critical", "k8s", "cluster", "pod:" + pod,
+                           "%d redémarrages en 30 min — le conteneur boucle" % int(_val(item) or 0)))
+
+    # (2) CHARGE DE TRAVAIL INCOMPLÈTE. `min_over_time` sur 10 min : pendant un
+    #     déploiement l'écart est normal et transitoire ; seul un écart PERMANENT
+    #     signale des réplicas qui ne démarrent pas.
+    for item in _q(_WORKLOAD):
+        m = item.get("metric", {})
+        out.append(Problem("critical", "k8s", "cluster",
+                           "%s/%s" % (m.get("namespace", "?"), m.get("deployment", "?")),
+                           "réplicas manquants depuis ≥10 min (écart %d)" % int(_val(item) or 0)))
+
+    # (3) POD QUI NE DÉMARRE PAS. `Pending` durable = rien ne peut le placer :
+    #     plus de ressources sur les nœuds, ou un volume qui ne s'attache pas.
+    for item in _q(_PENDING):
+        pod = item.get("metric", {}).get("pod", "?")
+        out.append(Problem("warning", "k8s", "cluster", "pod:" + pod,
+                           "en attente de placement depuis ≥15 min — ressources ou volume"))
+
+    # (4) CPU DES NŒUDS — LE GOULOT MESURÉ. Moyenne sur 15 min et non valeur
+    #     instantanée : une pointe à 99 % pendant une montée en charge de
+    #     l'autoscaler est normale, quinze minutes au-dessus de 90 % ne l'est pas.
+    #     🔴 Le message dit « ajoutez un nœud » et non « augmentez maxReplicas » :
+    #     à saturation (~700 req/s mesurés) les pods api étaient à 13 % de leur
+    #     limite — ajouter des réplicas ne déplacerait pas ce plafond.
+    for item in _q(_NODE_CPU):
+        node = item.get("metric", {}).get("instance", "?")
+        out.append(Problem("warning", "k8s", "cluster", "noeud-cpu:" + node,
+                           "CPU à %d %% en moyenne sur 15 min — le plafond de capacité est le "
+                           "CPU des nœuds, pas le nombre de pods (ajouter un nœud, pas des "
+                           "réplicas)" % int(_val(item) or 0)))
+
+    # (5) MÉMOIRE DES NŒUDS. Plus grave que le CPU : une saturation mémoire fait
+    #     ÉVINCER des pods par le kubelet, alors qu'un CPU saturé ne fait que
+    #     ralentir. D'où le niveau critique et un seuil un peu plus bas.
+    for item in _q(_NODE_MEM):
+        node = item.get("metric", {}).get("instance", "?")
+        out.append(Problem("critical", "k8s", "cluster", "noeud-memoire:" + node,
+                           "mémoire à %d %% — risque d'éviction de pods" % int(_val(item) or 0)))
+
+    # (6) DISQUE DES NŒUDS. Un disque plein empêche d'écrire les journaux, de
+    #     tirer une image, et fait passer le nœud en pression disque.
+    for item in _q(_NODE_DISK):
+        node = item.get("metric", {}).get("instance", "?")
+        pct = _val(item) or 0
+        out.append(Problem("critical" if pct > 94 else "warning", "k8s", "cluster",
+                           "noeud-disque:" + node, "disque à %d %%" % int(pct)))
+
+    return out
+
+
+
+
 def collect_problems(cfg: AlertConfig, *, now: datetime | None = None) -> list[Problem]:
     """Query the hub and return all problems at/above ``cfg.min_level``."""
     now = now or datetime.now(timezone.utc)
@@ -588,6 +714,7 @@ def collect_problems(cfg: AlertConfig, *, now: datetime | None = None) -> list[P
     )
     problems += problems_from_k8s_backups(cfg, now=now)
     problems += problems_from_lokalflash(cfg.prometheus_url)
+    problems += problems_from_k8s_cluster(cfg.prometheus_url)
     threshold = _LEVELS.get(cfg.min_level, 1)
     kept = [p for p in problems if _LEVELS.get(p.level, 0) >= threshold]
     kept.sort(key=lambda p: (-_LEVELS.get(p.level, 0), p.category, p.target))
