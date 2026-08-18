@@ -45,6 +45,21 @@ PROM = "vsa-prometheus"
 # un nœud le ferait. Refaire la mesure après tout changement de nœuds.
 CAPACITY_RPS = 700
 
+
+# 🔴 LE DATASOURCE SE DÉCLARE AU NIVEAU DU PANNEAU, PAS SEULEMENT DE LA REQUÊTE.
+#
+# Vu à l'écran le 2026-08-18 : les seize panneaux affichaient « No data » avec
+# « parse error at line 1, col 1: syntax error: unexpected IDENTIFIER » — la
+# signature d'une erreur LogQL. Cause : **Loki est le datasource PAR DÉFAUT** de
+# ce Grafana, et un panneau sans `datasource` propre y retombe, quel que soit ce
+# que déclarent ses requêtes. Du PromQL était donc envoyé à Loki.
+#
+# Rien ne l'avait montré avant : les vingt expressions avaient été validées
+# directement contre Prometheus (elles rendaient toutes des données), le
+# provisionnement s'était fait sans erreur, et le tableau était bien en base.
+# Seul l'affichage réel pouvait l'attraper.
+DS = {"type": "prometheus", "uid": PROM}
+
 _id = 0
 
 
@@ -68,7 +83,7 @@ def t(expr, legend="", instant=False):
 def stat(title, expr, gp, *, unit="short", decimals=0, steps=None, legend="",
          desc="", mappings=None, color_mode="background", graph=False):
     return {
-        "id": nid(), "type": "stat", "title": title, "gridPos": gp,
+        "id": nid(), "type": "stat", "title": title, "gridPos": gp, "datasource": DS,
         "description": desc,
         "targets": [t(expr, legend, instant=True)],
         "fieldConfig": {"defaults": {
@@ -87,7 +102,7 @@ def stat(title, expr, gp, *, unit="short", decimals=0, steps=None, legend="",
 
 def gauge(title, expr, gp, *, unit="percent", max_=100, steps=None, desc=""):
     return {
-        "id": nid(), "type": "gauge", "title": title, "gridPos": gp,
+        "id": nid(), "type": "gauge", "title": title, "gridPos": gp, "datasource": DS,
         "description": desc,
         "targets": [t(expr, instant=True)],
         "fieldConfig": {"defaults": {
@@ -130,7 +145,7 @@ def ts(title, targets, gp, *, unit="short", desc="", stack=False, fill=12,
         defaults["thresholds"] = {"mode": "absolute", "steps": thresholds}
         defaults["custom"]["thresholdsStyle"] = {"mode": "line"}
     return {
-        "id": nid(), "type": "timeseries", "title": title, "gridPos": gp,
+        "id": nid(), "type": "timeseries", "title": title, "gridPos": gp, "datasource": DS,
         "description": desc, "targets": tg,
         "fieldConfig": {"defaults": defaults, "overrides": []},
         "options": {
@@ -143,9 +158,15 @@ def ts(title, targets, gp, *, unit="short", desc="", stack=False, fill=12,
 
 def table(title, expr, gp, *, desc="", unit="s", steps=None):
     return {
-        "id": nid(), "type": "table", "title": title, "gridPos": gp,
+        "id": nid(), "type": "table", "title": title, "gridPos": gp, "datasource": DS,
         "description": desc,
-        "targets": [t(expr, "", instant=True)],
+        # 🔴 `format: "table"` — SANS LUI, RIEN NE S'AFFICHE COMME UN TABLEAU.
+        # Une requête instantanée qui rend plusieurs séries produit un FRAME PAR
+        # SÉRIE : Grafana n'affiche alors qu'une seule valeur, avec un menu
+        # déroulant pour choisir la série. Vu à l'écran le 2026-08-18. En mode
+        # `table`, Prometheus rend un frame unique où chaque étiquette devient
+        # une colonne — c'est ce que le panneau attend.
+        "targets": [dict(t(expr, "", instant=True), format="table")],
         "transformations": [
             {"id": "organize", "options": {
                 "excludeByName": {"Time": True, "job": True, "instance": True,
@@ -156,10 +177,18 @@ def table(title, expr, gp, *, desc="", unit="s", steps=None):
         "fieldConfig": {"defaults": {
             "unit": unit,
             "custom": {"align": "auto", "cellOptions": {"type": "color-text"}},
+            # 🔴 UN SEUL SEUIL, ET IL EST HAUT — parce que les cadences DIFFÈRENT.
+            # Première version : orange à 15 min, rouge à 90 min. Résultat vu à
+            # l'écran le 2026-08-18 : `push-subs-cleanup` en ROUGE à 7 h et deux
+            # autres en orange, alors que ce sont des tâches JOURNALIÈRES et que
+            # c'est parfaitement normal. Un tableau dont trois lignes sont
+            # perpétuellement rouges apprend à ignorer le rouge.
+            # 26 h est le seul seuil qui soit anormal pour TOUTES les tâches,
+            # journalières comprises. Les tâches rapides, elles, ont leur propre
+            # voyant en rangée ① (seuil 15 min, aligné sur l'alerte par e-mail).
             "thresholds": {"mode": "absolute", "steps": steps or [
-                {"color": "green", "value": None},
-                {"color": "orange", "value": 900},
-                {"color": "red", "value": 5400},
+                {"color": "text", "value": None},
+                {"color": "red", "value": 93600},
             ]},
             "color": {"mode": "thresholds"},
         }, "overrides": []},
@@ -210,12 +239,24 @@ panels.append(stat(
     steps=[{"color": "red", "value": None}, {"color": "orange", "value": 3}, {"color": "green", "value": 14}],
     desc="Filet de sécurité : cert-manager renouvelle ~30 jours avant. Ne descend que si le "
          "renouvellement est réellement cassé."))
+# 🔴 CE VOYANT NE REGARDE QUE LES TÂCHES À CADENCE RAPIDE, ET C'EST LE MÊME
+# SOUS-ENSEMBLE QUE L'ALERTE. Première version : `max()` sur TOUTES les tâches —
+# donc sur les journalières, qui affichent normalement plusieurs heures. Le
+# voyant restait orange en permanence (vu à l'écran : « 7 hours »), et un voyant
+# perpétuellement orange apprend à être ignoré. Pire, il aurait CONTREDIT
+# l'alerte, qui n'a jamais surveillé ces tâches-là. Le seuil de 900 s est
+# exactement celui de `_LF_CRON_MAX_AGE_S` côté alerteur : l'écran et le mail
+# disent désormais la même chose.
 panels.append(stat(
-    "Tâche de fond la plus silencieuse", "max(lf_cron_last_run_age_seconds)",
+    "Tâches rapides — dernier passage",
+    'max(lf_cron_last_run_age_seconds{name=~"recurring-push|device-presence"})',
     {"h": 4, "w": 4, "x": 20, "y": y}, unit="s",
-    steps=[{"color": "green", "value": None}, {"color": "orange", "value": 3600}, {"color": "red", "value": 90000}],
-    desc="⚠️ Toutes les tâches n'ont PAS la même cadence : certaines sont journalières, "
-         "donc une valeur de plusieurs heures est normale. Voir le tableau détaillé plus bas."))
+    steps=[{"color": "green", "value": None}, {"color": "red", "value": 900}],
+    desc="Les deux tâches qui tournent toutes les 60 secondes, dont **recurring-push** — "
+         "celle qui envoie les notifications de flash deals. Rouge au-delà de 15 min, le "
+         "seuil exact de l'alerte par e-mail. Les tâches journalières ne sont PAS ici : "
+         "elles affichent normalement plusieurs heures, et les mêler rendrait ce voyant "
+         "orange en permanence. Elles figurent dans le tableau détaillé plus bas."))
 y += 4
 
 # ── RANGÉE 2 : la capacité — la question du 3ᵉ nœud ──────────────────────────

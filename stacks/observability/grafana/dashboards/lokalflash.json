@@ -41,6 +41,10 @@
         "x": 0,
         "y": 1
       },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vsa-prometheus"
+      },
       "description": "Sonde externe depuis ce hub, hors cluster : la seule qui voie une panne de bord (ingress, DNS, TLS). Sentry, lui, ne peut rien voir d'un bord éteint.",
       "targets": [
         {
@@ -123,6 +127,10 @@
         "w": 4,
         "x": 4,
         "y": 1
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vsa-prometheus"
       },
       "description": "",
       "targets": [
@@ -207,6 +215,10 @@
         "x": 8,
         "y": 1
       },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vsa-prometheus"
+      },
       "description": "Des utilisateurs ont reçu un échec. L'alerte se déclenche à 10 sur 5 min — seuil ABSOLU et non un taux : à faible trafic, 1 erreur sur 2 requêtes ferait 50 %.",
       "targets": [
         {
@@ -272,6 +284,10 @@
         "w": 4,
         "x": 12,
         "y": 1
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vsa-prometheus"
       },
       "description": "3 au repos, jusqu'à 12 par l'autoscaler. Sous 2 : plus de tolérance de panne. À 12 : le plafond de l'autoscaler est atteint — mais le vrai goulot est le CPU des nœuds.",
       "targets": [
@@ -343,6 +359,10 @@
         "x": 16,
         "y": 1
       },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vsa-prometheus"
+      },
       "description": "Filet de sécurité : cert-manager renouvelle ~30 jours avant. Ne descend que si le renouvellement est réellement cassé.",
       "targets": [
         {
@@ -402,21 +422,25 @@
     {
       "id": 7,
       "type": "stat",
-      "title": "Tâche de fond la plus silencieuse",
+      "title": "Tâches rapides — dernier passage",
       "gridPos": {
         "h": 4,
         "w": 4,
         "x": 20,
         "y": 1
       },
-      "description": "⚠️ Toutes les tâches n'ont PAS la même cadence : certaines sont journalières, donc une valeur de plusieurs heures est normale. Voir le tableau détaillé plus bas.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vsa-prometheus"
+      },
+      "description": "Les deux tâches qui tournent toutes les 60 secondes, dont **recurring-push** — celle qui envoie les notifications de flash deals. Rouge au-delà de 15 min, le seuil exact de l'alerte par e-mail. Les tâches journalières ne sont PAS ici : elles affichent normalement plusieurs heures, et les mêler rendrait ce voyant orange en permanence. Elles figurent dans le tableau détaillé plus bas.",
       "targets": [
         {
           "datasource": {
             "type": "prometheus",
             "uid": "vsa-prometheus"
           },
-          "expr": "max(lf_cron_last_run_age_seconds)",
+          "expr": "max(lf_cron_last_run_age_seconds{name=~\"recurring-push|device-presence\"})",
           "legendFormat": "",
           "instant": true,
           "range": false,
@@ -436,12 +460,8 @@
                 "value": null
               },
               {
-                "color": "orange",
-                "value": 3600
-              },
-              {
                 "color": "red",
-                "value": 90000
+                "value": 900
               }
             ]
           },
@@ -487,6 +507,10 @@
         "w": 6,
         "x": 0,
         "y": 6
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vsa-prometheus"
       },
       "description": "Débit rapporté au plafond MESURÉ de ~700 req/s (k6 depuis ce hub, chemin public complet, 2026-08-18). Le plafond est le CPU des NŒUDS : à saturation un nœud était à 99 % pendant que les pods api restaient à 13 % de leur limite. **Ajouter des réplicas ne le déplacerait pas — seul un troisième nœud le ferait.** Au-delà de 75 % durablement, c'est le moment d'en reparler.",
       "targets": [
@@ -556,6 +580,10 @@
         "w": 12,
         "x": 6,
         "y": 6
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vsa-prometheus"
       },
       "description": "La ligne rouge marque le plafond mesuré (700 req/s). Instantané, sommé sur tous les réplicas via Valkey.",
       "targets": [
@@ -632,6 +660,10 @@
         "w": 6,
         "x": 18,
         "y": 6
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vsa-prometheus"
       },
       "description": "C'est le PIC qui dimensionne, pas la moyenne. Le scénario à surveiller est l'envoi d'une notification de flash deal : tout le monde ouvre l'app en même temps.",
       "targets": [
@@ -712,6 +744,10 @@
         "x": 0,
         "y": 14
       },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vsa-prometheus"
+      },
       "description": "Mesure de bout en bout depuis ce hub : réseau, LoadBalancer, TLS et application compris. C'est la seule courbe qui dise ce que vit vraiment quelqu'un qui ouvre l'app.",
       "targets": [
         {
@@ -781,6 +817,10 @@
         "w": 12,
         "x": 12,
         "y": 14
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vsa-prometheus"
       },
       "description": "🔴 Le p95 est un PALIER d'histogramme, pas un centile exact : il saute de 250 à 500 à 1000 ms. La valeur 10000 signifie « au-delà du dernier palier », soit plus de 5 s. Le flux temps réel (SSE) est EXCLU de ces deux courbes : ses connexions durent des minutes et rendraient la moyenne illisible pour toujours.",
       "targets": [
@@ -881,6 +921,10 @@
         "x": 0,
         "y": 22
       },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vsa-prometheus"
+      },
       "description": "Les chemins sont regroupés en familles FERMÉES : stocker les URL brutes créerait une série par identifiant d'offre. « sonde » domine normalement (santé Kubernetes + sonde externe toutes les 15 s) — ce n'est pas du trafic d'utilisateurs.",
       "targets": [
         {
@@ -943,6 +987,10 @@
         "w": 6,
         "x": 12,
         "y": 22
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vsa-prometheus"
       },
       "description": "Les 4xx sont ATTENDUS (droits refusés, ressource absente, pré-vols CORS). Seuls les 5xx sont un incident.",
       "targets": [
@@ -1013,6 +1061,10 @@
         "w": 6,
         "x": 18,
         "y": 22
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vsa-prometheus"
       },
       "description": "Flux SSE ouverts sur tout le cluster — proche du nombre d'applications ouvertes sur un écran. ⚠️ Anonyme : le flux n'exige aucune authentification, donc trois onglets comptent trois. Pour savoir QUI est là, voir l'onglet Audience de /_/stats.",
       "targets": [
@@ -1086,6 +1138,10 @@
         "x": 0,
         "y": 31
       },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vsa-prometheus"
+      },
       "description": "🔴 SEULES TROIS TÂCHES SONT SURVEILLÉES PAR L'ÂGE, et c'est délibéré : sur les dix boucles, sept testent leur porte (heure visée, interrupteur de réglage, IMAP_HOST) AVANT de prendre leur verrou — elles n'horodatent donc que lorsqu'elles travaillent, et leur âge est irrégulier PAR CONSTRUCTION. Les trois fiables : recurring-push et device-presence (cadence 1 min), bounce-check (15 min). **recurring-push est la plus importante : figée, les notifications de flash deals n'atteignent plus personne, sans erreur nulle part.** Les autres lignes sont informatives ; une valeur de plusieurs heures y est normale.",
       "targets": [
         {
@@ -1097,7 +1153,8 @@
           "legendFormat": "",
           "instant": true,
           "range": false,
-          "refId": "A"
+          "refId": "A",
+          "format": "table"
         }
       ],
       "transformations": [
@@ -1132,16 +1189,12 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "text",
                 "value": null
               },
               {
-                "color": "orange",
-                "value": 900
-              },
-              {
                 "color": "red",
-                "value": 5400
+                "value": 93600
               }
             ]
           },
@@ -1170,6 +1223,10 @@
         "w": 12,
         "x": 12,
         "y": 31
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vsa-prometheus"
       },
       "description": "⚠️ Seule mesure LOCALE du tableau : elle décrit le pod qui a répondu au scrape, pas le cluster. Elle saute donc d'un pod à l'autre — utile pour repérer une saturation durable, pas pour lire une valeur exacte. Le pool traverse PgBouncer (mode transaction).",
       "targets": [
