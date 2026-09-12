@@ -16,6 +16,7 @@ driven by `vsa alert` + a systemd timer on the hub.
 | `disk` | Prometheus `node_filesystem_*` (all VPS, per watched mountpoint) | ≥ `DISK_WARN_PERCENT` → warning; ≥ `DISK_CRIT_PERCENT` → critical |
 | `endpoint` | Prometheus blackbox `probe_success` (external synthetic probe, `vps=ext`) | down for ≥3 min → critical |
 | `cert` (external) | Prometheus blackbox `probe_ssl_earliest_cert_expiry` (`vps=ext`) | < `CERT_WARN_DAYS` → warning; < `CERT_CRIT_DAYS` → critical |
+| `cronjob` | K8s API prod — tout CronJob du namespace, `lastScheduleTime` vs `lastSuccessfulTime` | lancement plus récent que le succès de > `K8S_CRONJOB_GRACE_HOURS` → critical ; jamais réussi → critical |
 
 Only problems at or above `VSA_ALERT_MIN_LEVEL` (default `warning`) are kept.
 
@@ -119,6 +120,29 @@ Each `vsa alert` run reads the env fresh, so edits take effect on the next
 timer fire (≤15 min) — no `systemctl restart` required.
 
 ## Configuration reference
+
+### `VSA_ALERT_K8S_CRONJOB_GRACE_HOURS` (défaut 6)
+
+Retard toléré entre le dernier **lancement** d'un CronJob et son dernier
+**succès**. 🔴 Le signal est volontairement **indépendant de la cadence** : on
+ne lit ni l'expression cron ni une durée attendue. Un CronJob hebdomadaire en
+échec affiche un retard de sept jours, un CronJob minuté un retard de quelques
+minutes — le même seuil sert aux deux, et changer l'horaire d'un job ne demande
+de tenir aucune table à jour.
+
+Ce qui est ignoré, et pourquoi : un CronJob `suspend: true` (arrêt voulu, pas
+une panne — ⚠️ donc une suspension oubliée reste invisible), un CronJob jamais
+lancé (il vient d'être créé), et `config-backup` qui garde son contrôle dédié
+(sinon deux alarmes pour un seul fait). Les Jobs en échec ne DÉCLENCHENT pas
+l'alarme — un échec vieux de trois semaines n'est plus un incident — ils la
+chiffrent dans le message.
+
+**D'où ça vient** : le 2026-09-12, `registry-gc` (prod LokalFlash) avait échoué
+deux dimanches de suite, sur le mécanisme qui empêche le registre d'images de
+saturer — saturation qui bloque TOUT déploiement. Quatre pods en `Error`,
+personne ne regardait. La surveillance ne couvrait alors qu'UN CronJob nommé en
+dur.
+
 
 All `VSA_ALERT_*` env vars live in `/etc/vsa/alert.env`. See
 `infra/systemd/alert.env.example` for the full annotated list. The most useful:
