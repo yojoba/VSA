@@ -84,6 +84,10 @@ class AlertConfig:
     k8s_namespace: str = "lokalflash"
     k8s_pg_cluster: str = "lokalflash-pg"
     k8s_config_cronjob: str = "config-backup"
+    # Retard toléré entre le dernier LANCEMENT et le dernier SUCCÈS d'un CronJob.
+    # Six heures : au-delà, un travail qui tourne encore est déjà pathologique,
+    # et un travail hebdomadaire en échec affiche un retard de SEPT JOURS.
+    k8s_cronjob_grace_hours: float = 6.0
     db_backup_max_hours: float = 26.0
     config_backup_max_hours: float = 26.0
 
@@ -117,6 +121,9 @@ class AlertConfig:
             k8s_namespace=os.environ.get("VSA_ALERT_K8S_NAMESPACE", "lokalflash"),
             k8s_pg_cluster=os.environ.get("VSA_ALERT_K8S_PG_CLUSTER", "lokalflash-pg"),
             k8s_config_cronjob=os.environ.get("VSA_ALERT_K8S_CONFIG_CRONJOB", "config-backup"),
+            k8s_cronjob_grace_hours=float(
+                os.environ.get("VSA_ALERT_K8S_CRONJOB_GRACE_HOURS", "6") or 6
+            ),
             db_backup_max_hours=float(os.environ.get("VSA_ALERT_DB_BACKUP_MAX_HOURS", "26")),
             config_backup_max_hours=float(os.environ.get("VSA_ALERT_CONFIG_BACKUP_MAX_HOURS", "26")),
         )
@@ -428,6 +435,97 @@ def problems_from_k8s_backups(cfg: "AlertConfig", *, now: datetime) -> list["Pro
     return out
 
 
+def problems_from_k8s_cronjobs(cfg: "AlertConfig", *, now: datetime) -> list["Problem"]:
+    """Tout CronJob du namespace dont le dernier passage n'a pas réussi.
+
+    🔴 POURQUOI CETTE FONCTION EXISTE. Le 2026-09-12, le CronJob `registry-gc`
+    de la prod LokalFlash avait échoué **deux dimanches de suite** — quatre pods
+    en `Error`, code de sortie 2 — sans que rien ne le signale. Or c'est le
+    mécanisme qui empêche le registre d'images de saturer, et sa saturation
+    BLOQUE tout déploiement en corrompant les images au push. Il n'a été vu
+    qu'à l'œil, par hasard, pendant un contrôle d'après-release.
+    `problems_from_k8s_backups` ne regardait qu'UN CronJob, nommé en dur
+    (`config-backup`) : tous les autres étaient hors surveillance.
+
+    🔴 LE SIGNAL EST INDÉPENDANT DE LA CADENCE, et c'est ce qui le rend
+    utilisable. On ne lit ni l'expression cron ni une durée attendue : on
+    compare `lastScheduleTime` (quand Kubernetes a lancé la dernière fois) à
+    `lastSuccessfulTime` (quand un passage a réussi la dernière fois). Si le
+    lancement est plus RÉCENT que le succès au-delà de la tolérance, le dernier
+    passage n'a pas abouti — que le CronJob tourne toutes les minutes ou une
+    fois par semaine, et sans rien à tenir à jour quand on change son horaire.
+    Le même test attrape aussi « n'a jamais réussi ».
+
+    Un CronJob `suspend: true` est IGNORÉ : c'est un arrêt voulu, pas une
+    panne. ⚠️ Corollaire assumé — une suspension oubliée reste invisible ici.
+
+    `config-backup` est écarté : il a déjà son contrôle dédié ci-dessus, avec
+    son propre message. Deux alarmes pour un fait diraient deux fois la même
+    chose.
+
+    API injoignable -> liste vide : une panne de cluster est déjà couverte par
+    la sonde blackbox, on ne crie pas deux fois.
+    """
+    if not cfg.k8s_api or not cfg.k8s_token:
+        return []
+    headers = {"Authorization": f"Bearer {cfg.k8s_token}"}
+    verify: Any = cfg.k8s_ca_file or True
+    base = cfg.k8s_api.rstrip("/")
+    ns = cfg.k8s_namespace
+
+    def _get(path: str) -> dict[str, Any] | None:
+        try:
+            r = httpx.get(base + path, headers=headers, verify=verify, timeout=15.0)
+            r.raise_for_status()
+            return r.json()
+        except (httpx.HTTPError, ValueError):
+            return None
+
+    cjs = _get(f"/apis/batch/v1/namespaces/{ns}/cronjobs")
+    if cjs is None:
+        return []
+
+    # Les Jobs en échec, indexés par le CronJob qui les a créés : ils ne
+    # DÉCLENCHENT pas l'alarme (un Job en échec vieux de trois semaines n'est
+    # plus un incident), ils la rendent lisible en la chiffrant.
+    failed_by_owner: dict[str, int] = {}
+    for j in (_get(f"/apis/batch/v1/namespaces/{ns}/jobs") or {}).get("items", []):
+        if (j.get("status", {}).get("failed") or 0) <= 0:
+            continue
+        for ref in j.get("metadata", {}).get("ownerReferences", []) or []:
+            if ref.get("kind") == "CronJob" and ref.get("name"):
+                failed_by_owner[ref["name"]] = failed_by_owner.get(ref["name"], 0) + 1
+
+    grace_min = max(0.0, cfg.k8s_cronjob_grace_hours) * 60.0
+    out: list[Problem] = []
+    for cj in cjs.get("items", []):
+        name = (cj.get("metadata") or {}).get("name") or ""
+        if not name or name == cfg.k8s_config_cronjob:
+            continue
+        if (cj.get("spec") or {}).get("suspend"):
+            continue
+        st = cj.get("status") or {}
+        # `_age_minutes` rend un ÂGE : plus il est grand, plus c'est ancien.
+        sched = _age_minutes(st.get("lastScheduleTime", ""), now=now)
+        ok = _age_minutes(st.get("lastSuccessfulTime", ""), now=now)
+        if sched is None:
+            continue  # jamais lancé — un CronJob qui vient d'être créé
+        n = failed_by_owner.get(name, 0)
+        chiffre = f"{n} Job(s) en échec" if n else "aucun Job en échec listé"
+        if ok is None:
+            if sched > grace_min:
+                out.append(Problem(
+                    "critical", "cronjob", "k8s", name,
+                    f"{name} n'a JAMAIS réussi — lancé pour la dernière fois il y a "
+                    f"{sched / 60:.0f} h ({chiffre})"))
+            continue
+        if ok - sched > grace_min:
+            out.append(Problem(
+                "critical", "cronjob", "k8s", name,
+                f"{name} : dernier succès il y a {ok / 60:.0f} h, dernier lancement il y a "
+                f"{sched / 60:.0f} h — le dernier passage n'a pas abouti ({chiffre})"))
+    return out
+
 # --- LokalFlash K8s application metrics -------------------------------------
 
 # 🔴 SEULS LES CRONS À CADENCE FIABLE SONT SURVEILLÉS PAR L'ÂGE.
@@ -735,6 +833,7 @@ def collect_problems(cfg: AlertConfig, *, now: datetime | None = None) -> list[P
         cert_crit_days=cfg.cert_crit_days,
     )
     problems += problems_from_k8s_backups(cfg, now=now)
+    problems += problems_from_k8s_cronjobs(cfg, now=now)
     problems += problems_from_lokalflash(cfg.prometheus_url)
     problems += problems_from_k8s_cluster(cfg.prometheus_url)
     threshold = _LEVELS.get(cfg.min_level, 1)

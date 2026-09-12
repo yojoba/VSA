@@ -261,3 +261,103 @@ def test_render_bodies_marks_new():
     text, html = alerting.render_bodies(cfg, [p], [p], set(), now=NOW)
     assert "NOUVEAU" in text and "NOUVEAU" in html
     assert "a.ch" in html
+
+
+# --- CronJobs K8s en échec -------------------------------------------------
+#
+# 🔴 CES TESTS EXISTENT PARCE QUE LE DÉFAUT N'A ÉTÉ VU PAR PERSONNE. Le
+# CronJob `registry-gc` de la prod LokalFlash a échoué deux dimanches de suite,
+# quatre pods en Error, sur le mécanisme qui empêche le registre d'images de
+# saturer — et rien ne l'a signalé, parce que la surveillance ne regardait
+# qu'un seul CronJob nommé en dur.
+
+
+def _k8s_cfg() -> AlertConfig:
+    return AlertConfig(
+        k8s_api="https://k8s.test:6443", k8s_token="tok", k8s_namespace="lokalflash",
+    )
+
+
+def _k8s_fake(cronjobs: list[dict], jobs: list[dict] | None = None):
+    """Répond aux DEUX chemins que la fonction interroge (cronjobs, puis jobs)."""
+    def _get(url, **kwargs):
+        if "/cronjobs" in url:
+            return _FakeResp({"items": cronjobs})
+        if "/jobs" in url:
+            return _FakeResp({"items": jobs or []})
+        raise AssertionError(f"chemin inattendu : {url}")
+    return _get
+
+
+def _cj(name: str, *, scheduled_min: float | None, ok_min: float | None, suspend: bool = False) -> dict:
+    st: dict = {}
+    if scheduled_min is not None:
+        st["lastScheduleTime"] = _iso(scheduled_min)
+    if ok_min is not None:
+        st["lastSuccessfulTime"] = _iso(ok_min)
+    return {"metadata": {"name": name}, "spec": {"suspend": suspend}, "status": st}
+
+
+def _failed_job(owner: str) -> dict:
+    return {"metadata": {"name": owner + "-123", "ownerReferences": [{"kind": "CronJob", "name": owner}]},
+            "status": {"failed": 1}}
+
+
+def test_cronjob_hebdo_en_echec_est_signale(monkeypatch):
+    # Le cas RÉEL : lancé dimanche dernier, dernier succès le dimanche d'avant.
+    monkeypatch.setattr(alerting.httpx, "get", _k8s_fake(
+        [_cj("registry-gc", scheduled_min=6 * 24 * 60, ok_min=13 * 24 * 60)],
+        [_failed_job("registry-gc"), _failed_job("registry-gc")],
+    ))
+    ps = alerting.problems_from_k8s_cronjobs(_k8s_cfg(), now=NOW)
+    assert [p.target for p in ps] == ["registry-gc"]
+    assert ps[0].level == "critical" and ps[0].category == "cronjob"
+    assert "2 Job(s) en échec" in ps[0].detail
+
+
+def test_cronjob_qui_vient_de_reussir_est_muet(monkeypatch):
+    # Lancé il y a 6 jours, réussi deux minutes plus tard : rien à dire —
+    # et c'est bien une cadence HEBDOMADAIRE, donc l'âge seul aurait crié.
+    monkeypatch.setattr(alerting.httpx, "get", _k8s_fake(
+        [_cj("registry-gc", scheduled_min=6 * 24 * 60, ok_min=6 * 24 * 60 - 2)]))
+    assert alerting.problems_from_k8s_cronjobs(_k8s_cfg(), now=NOW) == []
+
+
+def test_cronjob_jamais_reussi_est_signale(monkeypatch):
+    monkeypatch.setattr(alerting.httpx, "get", _k8s_fake(
+        [_cj("nouveau", scheduled_min=48 * 60, ok_min=None)]))
+    ps = alerting.problems_from_k8s_cronjobs(_k8s_cfg(), now=NOW)
+    assert len(ps) == 1 and "JAMAIS réussi" in ps[0].detail
+
+
+def test_cronjob_jamais_lance_est_muet(monkeypatch):
+    # Créé à l'instant : il n'a pas encore eu son créneau, ce n'est pas un défaut.
+    monkeypatch.setattr(alerting.httpx, "get", _k8s_fake(
+        [_cj("tout-neuf", scheduled_min=None, ok_min=None)]))
+    assert alerting.problems_from_k8s_cronjobs(_k8s_cfg(), now=NOW) == []
+
+
+def test_cronjob_suspendu_est_ignore(monkeypatch):
+    monkeypatch.setattr(alerting.httpx, "get", _k8s_fake(
+        [_cj("en-pause", scheduled_min=30 * 24 * 60, ok_min=90 * 24 * 60, suspend=True)]))
+    assert alerting.problems_from_k8s_cronjobs(_k8s_cfg(), now=NOW) == []
+
+
+def test_config_backup_reste_au_controle_dedie(monkeypatch):
+    # 🔴 Contre-marqueur : sans cette exclusion on enverrait DEUX alarmes pour
+    # un seul fait, celle-ci et celle de problems_from_k8s_backups.
+    monkeypatch.setattr(alerting.httpx, "get", _k8s_fake(
+        [_cj("config-backup", scheduled_min=60, ok_min=99 * 60)]))
+    assert alerting.problems_from_k8s_cronjobs(_k8s_cfg(), now=NOW) == []
+
+
+def test_api_injoignable_ne_dit_rien(monkeypatch):
+    def boom(*a, **k):
+        raise alerting.httpx.HTTPError("down")
+    monkeypatch.setattr(alerting.httpx, "get", boom)
+    assert alerting.problems_from_k8s_cronjobs(_k8s_cfg(), now=NOW) == []
+
+
+def test_sans_identifiants_k8s_ne_dit_rien(monkeypatch):
+    cfg = AlertConfig()  # ni API ni jeton K8s
+    assert alerting.problems_from_k8s_cronjobs(cfg, now=NOW) == []
