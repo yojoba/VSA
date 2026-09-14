@@ -55,13 +55,12 @@ vsa site provision --domain X --port Z --detect --external-port Z
 vsa site unprovision --domain X [--keep-container] [--keep-cert] [-y]
 vsa site list
 
-# Multipoint provisioning (multiple backends on one domain)
-# Routes different URL paths to different containers behind a single domain
-vsa site provision --domain promoflash.flowbiz.ai \
-  --route /=promoflash-frontend:80 \
-  --route /api/=promoflash-pocketbase:8090 \
-  --route /_/=promoflash-pocketbase:8090
-# Result: / → frontend, /api/* → PocketBase API, /_/* → PocketBase admin UI
+# Multipoint (multiple backends on one domain) — NOT IMPLEMENTED in the CLI.
+# `--route` does not exist: `site provision` renders one upstream only, and
+# hard-codes the microphone-blocking security_headers.conf snippet. A domain
+# that needs several backends, or getUserMedia, is a hand-written vhost in
+# stacks/reverse-proxy/nginx/conf.d/ deployed by `vsa vhost sync`.
+# See docs/runbooks/handwritten_vhosts.md.
 
 # SSL certificates
 vsa cert issue --domain X                                 # HTTP-01 webroot (default)
@@ -80,6 +79,8 @@ vsa auth remove --domain X
 vsa auth list
 
 # NGINX vhosts
+# 🔴 `sync` is rsync --delete: anything on the mount but not in this repo is
+# removed, silently (nginx -t still passes). See docs/runbooks/handwritten_vhosts.md
 vsa vhost sync
 vsa vhost list
 vsa vhost show DOMAIN
@@ -297,6 +298,7 @@ vsa cert install-cron
 - [ADR-005: Multi-VPS-aware Dashboard](docs/ADRs/005-multi-vps-aware-dashboard.md)
 - [ADR-006: Hub→Agent Execution Channel](docs/ADRs/006-hub-to-agent-execution.md)
 - [Runbook: Provision a Site](docs/runbooks/provision_site.md)
+- [Runbook: Hand-written Vhosts (multi-backend, microphone)](docs/runbooks/handwritten_vhosts.md)
 - [Runbook: DNS-01 Cloudflare Cert Auto-Renewal](docs/runbooks/dns01_cloudflare.md)
 - [Runbook: Fleet Health Timers (drift + cert-health)](docs/runbooks/fleet_health_timers.md)
 - [Runbook: Fleet Alerting (email alarms)](docs/runbooks/alerting.md)
