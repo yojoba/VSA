@@ -27,6 +27,8 @@ multi-backend domain is a hand-written file.
 | `sia.flowbiz.ai.conf` | VoiceNotes — LokalFlash Sàrl | two upstreams (`voicenotes-web`, `voicenotes-api` under `/api/`) + microphone allowed |
 | `impact.flowbiz.ai.conf` | VoiceNotes — Bureau d'Etudes Impact SA | idem |
 | `osom.flowbiz.ai.conf` | VoiceNotes — OSOM | idem |
+| `prospect.flowbiz.ai.conf` | Prospection B2B — flowbiz.ai (compte plateforme) | two upstreams (`prospection-web`, `prospection-api` under `/api/`) |
+| `c-living.flowbiz.ai.conf` | Prospection B2B — Californian Living & Kooala | idem |
 
 The three VoiceNotes domains share **one** docker compose stack (containers
 `voicenotes-web` and `voicenotes-api`); the Go API picks the tenant from the
