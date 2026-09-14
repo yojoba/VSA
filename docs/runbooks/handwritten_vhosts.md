@@ -70,6 +70,21 @@ sudo rsync -an --delete --itemize-changes \
 Empty output means the sync is safe. Anything listed must be committed here
 first (or deleted deliberately).
 
+## A vhost whose certificate does not exist yet: `.conf.pending`
+
+`vsa vhost sync` copies **every** `*.conf` of the repo to the mount, then runs
+`nginx -t`. A vhost that references `/etc/letsencrypt/live/<domain>/…` before
+that certificate exists makes the whole test fail and blocks the reload — for
+every domain on the host. Measured on 2026-09-14 with `c-living.flowbiz.ai`
+(no DNS record yet, hence no certificate): `prospect.flowbiz.ai` could not go
+live until the file was removed from the mount by hand.
+
+Rule: a hand-written vhost enters this repo as `<domain>.conf.pending` (nginx
+only includes `*.conf`) and is renamed to `.conf` **after** its certificate
+exists. `prospection/deploy/flowbiz-1/add-host.sh` understands `.pending`:
+first run issues the certificate and stops; rename, commit, push, pull; second
+run syncs the real vhost.
+
 ## Issuing the first certificate for a hand-written vhost
 
 The repo vhost references `ssl_certificate /etc/letsencrypt/live/<domain>/…`,
