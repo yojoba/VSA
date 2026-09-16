@@ -66,6 +66,41 @@ Or via project Makefile (after adding a helper target):
 make observability-up
 ```
 
+### 🔴 Changer prometheus.yml / blackbox.yml : SIGHUP ne suffit PAS
+
+`prometheus.yml`, `blackbox.yml` et les autres confs sont des bind-mounts **de
+fichier**, pas de dossier. Un bind-mount de fichier suit **l'inode**, pas le
+chemin — et `git pull` (comme `sed -i`, ou tout éditeur qui écrit-puis-renomme)
+crée un **nouvel** inode. Le conteneur reste donc accroché à l'ancien fichier,
+invisible depuis l'hôte :
+
+```bash
+stat -c %i stacks/observability/prometheus.yml                     # 271843
+docker exec observability-prometheus-1 stat -c %i /etc/prometheus/prometheus.yml   # 262815 ← l'ancien
+```
+
+Un `docker kill -s HUP` journalise alors un rechargement parfaitement réussi
+(« Completed loading of configuration file ») de l'**ancienne** conf : tout a
+l'air vert, et la modification n'est nulle part. Vécu le 2026-09-16.
+
+Après un `git pull` qui touche ces fichiers, **redémarrer** les conteneurs
+concernés — c'est le démarrage qui re-résout le chemin :
+
+```bash
+docker restart observability-blackbox-exporter-1 observability-prometheus-1
+```
+
+Puis vérifier ce que le conteneur voit vraiment, jamais ce que l'hôte contient :
+
+```bash
+docker exec observability-prometheus-1 grep -c <un-mot-du-changement> /etc/prometheus/prometheus.yml
+docker exec observability-prometheus-1 wget -qO- \
+  'http://localhost:9090/api/v1/targets?state=active'    # scrapeUrl = la preuve du module utilisé
+```
+
+(Prometheus garde ses données : le TSDB est dans le volume `obs-prometheus-data`,
+pas dans le conteneur.)
+
 ## Reverse Proxy
 
 Attach Grafana to the existing reverse proxy by provisioning a vhost (example `grafana.flowbiz.ai`). Loki and Prometheus are usually kept internal; if you need remote access, protect endpoints with Basic Auth or VPN.
