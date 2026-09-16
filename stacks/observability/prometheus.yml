@@ -55,11 +55,40 @@ scrape_configs:
           - https://www.lokalflash.ch/
         labels:
           vps_id: ext
+      # adminfree.ch (hebergé ICI, sur flowbiz-1, en docker compose derriere le
+      # reverse-proxy). La sonde part quand meme du dehors : elle traverse le
+      # DNS public, le certificat et le vhost, c'est-a-dire exactement la chaine
+      # qui a casse le 2026-09-16.
+      #
+      # 🔴 `module: http_2xx_json_ok` — PAS le http_2xx par defaut. Ce jour-la,
+      # /api/health a repondu 200 avec index.html pendant des heures : le vhost
+      # avait perdu son `location /api/` et le conteneur web servait la PWA a la
+      # place de l'API. Un controle 2xx n'aurait rien vu. On exige donc que le
+      # corps porte {"status":"ok"} — seule l'API Go sait le dire.
+      - targets:
+          - https://adminfree.ch/api/health
+        labels:
+          vps_id: ext
+          module: http_2xx_json_ok
+      # La PWA elle-meme : la ou 2xx suffit, c'est du statique.
+      - targets:
+          - https://adminfree.ch/
+        labels:
+          vps_id: ext
     relabel_configs:
       - source_labels: [__address__]
         target_label: __param_target
       - source_labels: [__param_target]
         target_label: instance
+      # Un target peut reclamer un autre module que le http_2xx par defaut en
+      # portant un label `module` ; sans ce label, rien ne change.
+      - source_labels: [module]
+        regex: (.+)
+        target_label: __param_module
+      # ...et ce label ne survit pas au relabeling : il a fait son travail, il
+      # n'a rien a faire dans les series (l'alerte les groupe par `instance`).
+      - regex: module
+        action: labeldrop
       - target_label: __address__
         replacement: blackbox-exporter:9115
 

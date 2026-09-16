@@ -23,3 +23,33 @@ modules:
       # valid_status_codes empty ⇒ any 2xx is success.
       tls_config:
         insecure_skip_verify: false  # we WANT a probe failure if the cert is invalid
+
+  # Comme http_2xx, mais LE CORPS DOIT ÊTRE LE JSON ATTENDU.
+  #
+  # 🔴 Le "can be added later" du commentaire ci-dessus est arrivé : le
+  # 2026-09-16, adminfree.ch a été indisponible pendant des heures en
+  # répondant **200** sur /api/health. Le vhost du reverse-proxy avait perdu
+  # son `location /api/`, donc tout /api/… tombait dans le catch-all SPA du
+  # conteneur web, qui servait gaiement index.html — 200, TLS valide, corps
+  # HTML. Un contrôle « est-ce 2xx ? » serait resté AU VERT du début à la fin,
+  # pendant que plus personne ne pouvait se connecter (les POST, eux,
+  # récoltaient un 405 de nginx : on n'écrit pas sur un fichier statique).
+  #
+  # La leçon est générale, pas propre à adminfree : dès qu'une API vit derrière
+  # un proxy qui a aussi un catch-all statique, « ça répond » ne veut rien
+  # dire. Il faut demander au corps de PROUVER que c'est bien l'application qui
+  # a parlé. D'où ce module, à utiliser pour toute route de santé qui rend du
+  # JSON — le regexp est volontairement souple sur les espaces, la clé peut
+  # sortir dans n'importe quel ordre.
+  http_2xx_json_ok:
+    prober: http
+    timeout: 8s
+    http:
+      method: GET
+      follow_redirects: true
+      preferred_ip_protocol: ip4
+      fail_if_not_ssl: true
+      fail_if_body_not_matches_regexp:
+        - '"status"\s*:\s*"ok"'
+      tls_config:
+        insecure_skip_verify: false
