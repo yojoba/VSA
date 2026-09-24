@@ -1,0 +1,42 @@
+# californian-living.flowbiz.ai — préproduction du site Californian Living
+# (Next.js + CMS, dépôt yojoba/californian-living, dossier website/).
+# Non indexé (SITE_NOINDEX=1) tant que Silver International n'a pas validé ;
+# le vrai domaine californian-living.com reste sur WordPress jusque-là.
+#
+# 🔴 Vhost écrit à la main, PAS par `vsa site provision`. Une seule upstream :
+# le conteneur Next.js sert le site, l'admin (/admin/), l'API (/api/) et les
+# médias (/media/). Upload admin plafonné à 15 Mo côté application.
+
+server {
+  listen 80;
+  server_name californian-living.flowbiz.ai;
+  location /.well-known/acme-challenge/ { root /var/www/certbot; }
+  location / { return 301 https://$host$request_uri; }
+}
+
+server {
+  listen 443 ssl;
+  http2 on;
+  server_name californian-living.flowbiz.ai;
+
+  ssl_certificate     /etc/letsencrypt/live/californian-living.flowbiz.ai/fullchain.pem;
+  ssl_certificate_key /etc/letsencrypt/live/californian-living.flowbiz.ai/privkey.pem;
+
+  include /etc/nginx/snippets/security_headers.conf;
+  access_log /var/log/nginx/domains/californian-living.flowbiz.ai.access.json json_detailed;
+
+  client_max_body_size 20m;
+
+  resolver 127.0.0.11 ipv6=off;
+  set $site_upstream californian-living-site:3000;
+
+  location /healthz { return 200 "ok"; add_header Content-Type text/plain; }
+
+  location / {
+    proxy_pass http://$site_upstream;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Host $host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+  }
+}
